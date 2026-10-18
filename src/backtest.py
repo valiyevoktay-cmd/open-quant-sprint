@@ -18,6 +18,9 @@ class BacktestMetrics:
     mean_turnover: float
     net_pnl_cum: float
     hourly_returns: np.ndarray
+    gross_pnl_cum: float = 0.0
+    fee_cost_cum: float = 0.0
+    funding_cost_cum: float = 0.0
 
 
 def coerce_weights(df: pd.DataFrame, weights: pd.Series | np.ndarray | list) -> pd.Series:
@@ -41,12 +44,16 @@ def run_backtest(
     include_funding: bool = True,
     periods_per_year: int = 8760,
     n_trials: int = 10,
+    lag_bars: int = 1,
 ) -> BacktestMetrics:
     """
     Vectorized cross-sectional portfolio backtest.
-    Enforces a strict 1-bar execution delay: signal computed at bar t close
-    earns the return from t to t+1.
+    Supports variable execution delay (default lag_bars=1): signal computed at bar t close
+    is executed and held during bar t+lag_bars.
     """
+    if lag_bars < 1:
+        raise ValueError(f"lag_bars must be >= 1 to prevent same-bar execution leak, got {lag_bars}")
+
     work = df[["timestamp", "symbol", "close", "funding_rate"]].copy()
     work["w_raw"] = coerce_weights(df, weights).to_numpy(dtype=np.float64)
 
@@ -55,8 +62,8 @@ def run_backtest(
     scale = np.where(gross > 1.0, 1.0 / gross, 1.0)
     work["w"] = work["w_raw"] * scale
 
-    # 1-bar execution lag: weight held during (t-1 -> t) is w_{t-1}
-    work["w_held"] = work.groupby("symbol")["w"].shift(1).fillna(0.0)
+    # Execution lag: weight held during bar t is w_{t - lag_bars}
+    work["w_held"] = work.groupby("symbol")["w"].shift(lag_bars).fillna(0.0)
     work["w_prev_held"] = work.groupby("symbol")["w_held"].shift(1).fillna(0.0)
 
     work["ret"] = work.groupby("symbol")["close"].pct_change().fillna(0.0)
@@ -100,4 +107,8 @@ def run_backtest(
         mean_turnover=round(float(by_ts["turnover"].mean()), 4),
         net_pnl_cum=round(float(equity[-1]), 4),
         hourly_returns=r,
+        gross_pnl_cum=round(float(work["gross_pnl"].sum()), 4),
+        fee_cost_cum=round(float(work["fee_cost"].sum()), 4),
+        funding_cost_cum=round(float(work["funding_cost"].sum()), 4) if include_funding else 0.0,
     )
+

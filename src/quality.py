@@ -19,12 +19,13 @@ class QualityReport:
     timestamp_gaps: int
     extreme_outliers: int
     status: str
+    funding_irregularities: int = 0
 
 
 def audit_dataset(df: pd.DataFrame, expected_freq_hours: int = 1) -> QualityReport:
     n = len(df)
     if n == 0:
-        return QualityReport(0.0, 0, 0, 1.0, 0, 0, 0, 0, 0, "FAIL")
+        return QualityReport(0.0, 0, 0, 1.0, 0, 0, 0, 0, 0, "FAIL", 0)
 
     null_rate = float(df[list(REQUIRED_COLS)].isna().mean().mean())
     dup_keys = int(df.duplicated(subset=["timestamp", "symbol"]).sum())
@@ -63,12 +64,20 @@ def audit_dataset(df: pd.DataFrame, expected_freq_hours: int = 1) -> QualityRepo
                 mod_z = 0.6745 * np.abs(ret - med) / mad
                 outliers += int((mod_z > 15.0).sum())
 
+    # Point-in-time funding regularity: non-zero funding must fall on 8h settlement boundaries (00, 08, 16 UTC)
+    unaligned_funding = 0
+    if "funding_rate" in df.columns:
+        nz_funding = df["funding_rate"].abs() > 1e-9
+        if nz_funding.any():
+            hours = df.loc[nz_funding, "timestamp"].dt.hour
+            unaligned_funding = int((hours % 8 != 0).sum())
+
     # Composite Data Quality Score (0-100)
     s_completeness = max(0.0, 1.0 - null_rate * 20.0) * 30.0
     s_uniqueness = max(0.0, 1.0 - (dup_keys / n) * 50.0) * 15.0
     s_validity = max(0.0, 1.0 - ((ohlc_bad + non_pos) / n) * 50.0) * 25.0
     s_consistency = max(0.0, 1.0 - (outliers / n) * 20.0) * 15.0
-    s_timeliness = max(0.0, 1.0 - (gaps / max(1, n)) * 25.0) * 15.0
+    s_timeliness = max(0.0, 1.0 - ((gaps + unaligned_funding) / max(1, n)) * 25.0) * 15.0
 
     dqs = round(s_completeness + s_uniqueness + s_validity + s_consistency + s_timeliness, 2)
     status = "READY" if dqs >= 85.0 else ("USABLE" if dqs >= 65.0 else "REMEDIATE")
@@ -84,6 +93,7 @@ def audit_dataset(df: pd.DataFrame, expected_freq_hours: int = 1) -> QualityRepo
         timestamp_gaps=gaps,
         extreme_outliers=outliers,
         status=status,
+        funding_irregularities=unaligned_funding,
     )
 
 

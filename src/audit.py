@@ -131,6 +131,65 @@ def purged_oos_split_eval(
     }
 
 
+def evaluate_lag_sensitivity(
+    df: pd.DataFrame,
+    weights: pd.Series,
+    fee_bps: float = 5.0,
+) -> dict:
+    """
+    Stress-tests alpha persistence by comparing 1-bar execution delay against 2-bar delay.
+    A genuine structural signal decays smoothly; a look-ahead or instant-close signal collapses.
+    """
+    m1 = run_backtest(df, weights, fee_bps=fee_bps, lag_bars=1)
+    m2 = run_backtest(df, weights, fee_bps=fee_bps, lag_bars=2)
+
+    sr1 = m1.sharpe
+    sr2 = m2.sharpe
+    retention = (sr2 / sr1) if sr1 > 1e-6 else (1.0 if abs(sr1 - sr2) < 1e-6 else 0.0)
+    passed = bool(sr2 > 0.0 if sr1 > 0.0 else sr2 >= sr1 - 0.5)
+
+    return {
+        "sr_lag1": round(sr1, 2),
+        "sr_lag2": round(sr2, 2),
+        "retention_rate": round(retention, 3),
+        "passed": passed,
+        "m_lag1": m1,
+        "m_lag2": m2,
+    }
+
+
+def evaluate_shuffled_null(
+    df: pd.DataFrame,
+    weights: pd.Series,
+    seed: int = 42,
+) -> dict:
+    """
+    Null hypothesis test via return vector permutation.
+    Permutes the asset return series across the panel to destroy temporal signal-return correlation.
+    A valid uncorrupted pipeline produces |null_sharpe| < 0.75.
+    """
+    work = df[["timestamp", "symbol", "close"]].copy()
+    w_clean = coerce_weights(df, weights)
+    work["w_held"] = w_clean.groupby(df["symbol"]).shift(1).fillna(0.0)
+    work["ret"] = work.groupby("symbol")["close"].pct_change().fillna(0.0)
+
+    rng = np.random.default_rng(seed)
+    shuffled_ret = rng.permutation(work["ret"].to_numpy())
+    work["pnl_null"] = work["w_held"].to_numpy() * shuffled_ret
+    hourly_null = work.groupby("timestamp", sort=True)["pnl_null"].sum()
+
+    std_null = float(hourly_null.std())
+    ann_vol = std_null * np.sqrt(8760)
+    null_sharpe = float(hourly_null.mean() * 8760 / ann_vol) if ann_vol > 1e-12 else 0.0
+    passed = bool(abs(null_sharpe) < 0.75)
+
+    return {
+        "null_sharpe": round(null_sharpe, 2),
+        "passed": passed,
+    }
+
+
+
 def run_full_audit(
     df: pd.DataFrame,
     strategy_fn: StrategyFn,
@@ -151,6 +210,8 @@ def run_full_audit(
 
     fee_curve = {bps: run_backtest(df_clean, weights, fee_bps=bps) for bps in fee_grid_bps}
     split_res = purged_oos_split_eval(df_clean, weights, fee_bps=5.0)
+    lag_res = evaluate_lag_sensitivity(df_clean, weights, fee_bps=5.0)
+    null_res = evaluate_shuffled_null(df_clean, weights, seed=42)
 
     holdout_metrics: BacktestMetrics | None = None
     if holdout_df is not None and not holdout_df.empty:
@@ -170,6 +231,8 @@ def run_full_audit(
         and split_res["OOS"].sharpe > 0.0
         and fee_curve.get(5.0, fee_curve[fee_grid_bps[0]]).sharpe > 0.0
         and fee_curve.get(5.0, fee_curve[fee_grid_bps[0]]).mean_turnover > 1e-5
+        and lag_res["passed"]
+        and null_res["passed"]
     )
 
     return {
@@ -179,6 +242,8 @@ def run_full_audit(
         "ic": ic_stats,
         "fee_curve": fee_curve,
         "split": split_res,
+        "lag_sensitivity": lag_res,
+        "shuffled_null": null_res,
         "holdout": holdout_metrics,
         "perf": {"elapsed_ms": round(elapsed_ms, 2), "rows_per_sec": int(rows_per_sec)},
     }
@@ -190,12 +255,15 @@ def format_audit_report(res: dict, strategy_name: str) -> str:
     ic = res["ic"]
     split = res["split"]
     perf = res["perf"]
+    lag = res["lag_sensitivity"]
+    null = res["shuffled_null"]
+    m5 = res["fee_curve"].get(5.0, next(iter(res["fee_curve"].values())))
 
     lines = [
         "=" * 72,
         f"SYNDICATE AUDIT REPORT :: {strategy_name}",
         "=" * 72,
-        f"[1] DATA QUALITY     : DQS={dq.dqs}/100 ({dq.status}) | rows={dq.total_rows} | symbols={dq.n_symbols} | gaps={dq.timestamp_gaps}",
+        f"[1] DATA QUALITY     : DQS={dq.dqs}/100 ({dq.status}) | rows={dq.total_rows} | symbols={dq.n_symbols} | gaps={dq.timestamp_gaps} | funding_irreg={dq.funding_irregularities}",
         f"[2] CAUSALITY CHECK  : {'[PASS]' if c['passed'] else '[FAIL]'} {c['detail']}",
         f"[3] RANK IC (1h fwd) : mean={ic['mean_ic']:+.5f} | IC_IR={ic['ic_ir']:+.3f} | t={ic['t_stat']:+.2f} (p={ic['p_value']:.4f})",
         f"[4] RUNTIME          : {perf['elapsed_ms']:.1f} ms ({perf['rows_per_sec']:,} rows/sec)",
@@ -227,12 +295,23 @@ def format_audit_report(res: dict, strategy_name: str) -> str:
 
     lines.extend(
         [
+            "-" * 72,
+            "[7] LAG SENSITIVITY TEST (+1 extra bar execution lag @ 5.0 bps):",
+            f"    1-bar lag SR  : {lag['sr_lag1']:+.2f} | 2-bar lag SR: {lag['sr_lag2']:+.2f} | Retention: {lag['retention_rate'] * 100:.1f}% [{'PASS' if lag['passed'] else 'FAIL'}]",
+            "[8] NULL HYPOTHESIS TEST (shuffled returns permutation):",
+            f"    Permuted SR   : {null['null_sharpe']:+.2f} (hurdle |SR| < 0.75) [{'PASS - immune to pipeline noise' if null['passed'] else 'FAIL - pipeline artifact'}]",
+            "[9] FRICTION DRAG BREAKDOWN (@ 5.0 bps taker fee):",
+            f"    Gross PnL     : {m5.gross_pnl_cum * 100:+.2f}%",
+            f"    Fee Cost      : {m5.fee_cost_cum * 100:+.2f}%",
+            f"    Funding Drag  : {m5.funding_cost_cum * 100:+.2f}%",
+            f"    Net PnL       : {m5.net_pnl_cum * 100:+.2f}%",
             "=" * 72,
             f"FINAL VERDICT: {'[PASS] SURVIVED AUDIT' if res['passed'] else '[REJECT] FAILED AUDIT'}",
             "=" * 72,
         ]
     )
     return "\n".join(lines)
+
 
 
 def main() -> int:

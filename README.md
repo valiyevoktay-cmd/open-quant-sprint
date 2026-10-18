@@ -40,5 +40,8 @@ def compute_weights(df: pd.DataFrame) -> pd.Series:
 ## Audit Criteria
 
 1. **Causality (`check_causality_truncation`)**: Prefix cuts at 40%, 65%, 85% of timeline must match full-run weights (`max|w_trunc - w_full| < 1e-9`). Non-deterministic or zero-weight outputs are rejected.
-2. **Execution**: Strict 1-bar execution delay (`w[t-1]` applied to `close[t] / close[t-1] - 1`), historical 8h `funding_rate` payments, and linear transaction cost grid (`0, 3, 5, 10 bps`).
-3. **Validation**: Purged 70/30 In-Sample / Out-of-Sample split (24h embargo) at `5.0 bps` taker fee. Requires `OOS Sharpe > 0` and `Full Sharpe @ 5 bps > 0`.
+2. **Lag Sensitivity Test**: Adds +1 bar execution delay (lag 2 vs lag 1). Real signals degrade gradually; fragile look-ahead leaks collapse. Must retain >= 0% Sharpe.
+3. **Null Hypothesis Test**: Shuffles asset returns across time. If the pipeline still produces high absolute Sharpe (|SR| >= 0.75), it indicates a structural data processing leak.
+4. **Funding Regularity Check**: Validates point-in-time alignment of 8h settlement funding rates (hours 00, 08, 16 UTC).
+5. **Execution & Friction Breakdown**: 1-bar execution delay, historical 8h `funding_rate`, and linear transaction cost grid (`0, 3, 5, 10 bps`) with explicit Gross PnL, Fee Drag, and Funding Drag accounting.
+6. **Validation**: Purged 70/30 In-Sample / Out-of-Sample split (24h embargo) at `5.0 bps` taker fee. Requires `OOS Sharpe > 0` and `Full Sharpe @ 5 bps > 0`.

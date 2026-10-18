@@ -206,8 +206,52 @@ def test_real_binance_dataset_and_baseline_survival() -> None:
 
     assert res["data_quality"].dqs >= 95.0
     assert res["data_quality"].timestamp_gaps == 0
+    assert res["data_quality"].funding_irregularities == 0
     assert res["causality"]["passed"] is True
+    assert res["lag_sensitivity"]["passed"] is True
+    assert res["lag_sensitivity"]["sr_lag2"] > 0.0
+    assert res["shuffled_null"]["passed"] is True
+    assert abs(res["shuffled_null"]["null_sharpe"]) < 0.75
     assert res["passed"] is True
     if holdout_df is not None:
         assert res["holdout"] is not None
         assert res["holdout"].sharpe > 0.0
+
+
+def test_lag_sensitivity_and_shuffled_null(sample_panel: pd.DataFrame) -> None:
+    baseline_fn = load_strategy_fn("strategies/baseline_flow.py")
+    w_base = baseline_fn(sample_panel.copy())
+
+    # 1. Baseline survives extra lag (+1 bar execution delay)
+    from src.audit import evaluate_lag_sensitivity, evaluate_shuffled_null
+    lag_res = evaluate_lag_sensitivity(sample_panel, w_base, fee_bps=5.0)
+    assert lag_res["passed"] is True
+
+    # 2. Shuffled returns null test produces near-zero Sharpe
+    null_res = evaluate_shuffled_null(sample_panel, w_base, seed=42)
+    assert null_res["passed"] is True
+    assert abs(null_res["null_sharpe"]) < 0.75
+
+    # 3. Synthetic instant look-ahead collapses when delayed by +1 extra bar
+    next_c = sample_panel.groupby("symbol")["close"].shift(-1)
+    fwd_ret = (next_c - sample_panel["close"]) / sample_panel["close"]
+    w_peek = cross_sectional_zscore(sample_panel, fwd_ret.fillna(0.0))
+
+    m1 = run_backtest(sample_panel, w_peek, fee_bps=0.0, lag_bars=1)
+    m2 = run_backtest(sample_panel, w_peek, fee_bps=0.0, lag_bars=2)
+    assert m1.sharpe > 50.0  # instant look-ahead generates massive artificial Sharpe
+    assert m2.sharpe < 0.05 * m1.sharpe  # extra 1-bar delay destroys >95% of the peek advantage
+
+
+
+def test_funding_point_in_time_alignment(sample_panel: pd.DataFrame) -> None:
+    report_clean = audit_dataset(sample_panel)
+    assert report_clean.funding_irregularities == 0
+
+    # Inject an unaligned funding rate at an invalid hour (e.g. 05:00 UTC)
+    corrupted = sample_panel.copy()
+    hour_5_mask = corrupted["timestamp"].dt.hour == 5
+    corrupted.loc[hour_5_mask, "funding_rate"] = 0.0005
+    report_bad = audit_dataset(corrupted)
+    assert report_bad.funding_irregularities > 0
+
