@@ -112,9 +112,9 @@ def autoclean_market_data(df: pd.DataFrame, max_ffill_bars: int = 3) -> pd.DataF
     valid_price = (clean["open"] > 0) & (clean["high"] > 0) & (clean["low"] > 0) & (clean["close"] > 0)
     clean = clean.loc[valid_price].copy()
 
-    ohlc_Arr = clean[["open", "high", "low", "close"]].to_numpy()
-    clean["high"] = np.nanmax(ohlc_Arr, axis=1)
-    clean["low"] = np.nanmin(ohlc_Arr, axis=1)
+    ohlc_arr = clean[["open", "high", "low", "close"]].to_numpy()
+    clean["high"] = np.nanmax(ohlc_arr, axis=1)
+    clean["low"] = np.nanmin(ohlc_arr, axis=1)
 
     clean["volume"] = np.maximum(0.0, clean["volume"])
     clean["quote_volume"] = np.maximum(0.0, clean["quote_volume"])

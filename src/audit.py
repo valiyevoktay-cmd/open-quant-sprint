@@ -66,9 +66,16 @@ def check_causality_truncation(
         mask = (full_df["timestamp"] <= t_cut).to_numpy()
         sub_df = full_df.loc[mask].reset_index(drop=True)
 
-        w_sub = coerce_weights(sub_df, strategy_fn(sub_df.copy())).to_numpy(dtype=np.float64)
+        try:
+            w_sub = coerce_weights(sub_df, strategy_fn(sub_df.copy())).to_numpy(dtype=np.float64)
+        except Exception as exc:
+            return False, float("inf"), f"Strategy crashed on prefix cut at {t_cut}: {exc}"
+
         if idx == 0:
-            w_sub_repeat = coerce_weights(sub_df, strategy_fn(sub_df.copy())).to_numpy(dtype=np.float64)
+            try:
+                w_sub_repeat = coerce_weights(sub_df, strategy_fn(sub_df.copy())).to_numpy(dtype=np.float64)
+            except Exception as exc:
+                return False, float("inf"), f"Strategy crashed on repeated execution: {exc}"
             det_diff = float(np.max(np.abs(w_sub - w_sub_repeat)))
             if det_diff > tol:
                 return (
@@ -200,8 +207,24 @@ def run_full_audit(
     dq: QualityReport = audit_dataset(df_clean)
 
     t0 = time.perf_counter()
-    raw_weights = strategy_fn(df_clean.copy())
-    weights = coerce_weights(df_clean, raw_weights)
+    try:
+        raw_weights = strategy_fn(df_clean.copy())
+        weights = coerce_weights(df_clean, raw_weights)
+    except Exception as exc:
+        empty_m = BacktestMetrics(5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, np.array([0.0]))
+        return {
+            "passed": False,
+            "data_quality": dq,
+            "causality": {"passed": False, "max_diff": float("inf"), "detail": f"Strategy execution crashed: {exc}"},
+            "ic": {"mean_ic": 0.0, "ic_ir": 0.0, "t_stat": 0.0, "p_value": 1.0, "n_obs": 0},
+            "fee_curve": {bps: empty_m for bps in fee_grid_bps},
+            "split": {"IS": empty_m, "OOS": empty_m},
+            "lag_sensitivity": {"passed": False, "sr_lag1": 0.0, "sr_lag2": 0.0, "retention_rate": 0.0},
+            "shuffled_null": {"passed": False, "null_sharpe": 0.0},
+            "holdout": None,
+            "perf": {"elapsed_ms": 0.0, "rows_per_sec": 0},
+        }
+
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     rows_per_sec = len(df_clean) / max(1e-6, (elapsed_ms / 1000.0))
 
@@ -218,14 +241,17 @@ def run_full_audit(
         h_clean = enforce_schema(holdout_df)
         combined = pd.concat([df_clean, h_clean], ignore_index=True)
         combined = enforce_schema(combined)
-        w_comb = coerce_weights(combined, strategy_fn(combined.copy()))
-        h_start = h_clean["timestamp"].min()
-        h_mask = combined["timestamp"] >= h_start
-        h_slice = combined.loc[h_mask].reset_index(drop=True)
-        w_h = pd.Series(w_comb.loc[h_mask].to_numpy(), index=h_slice.index)
-        holdout_metrics = run_backtest(h_slice, w_h, fee_bps=5.0)
+        try:
+            w_comb = coerce_weights(combined, strategy_fn(combined.copy()))
+            h_start = h_clean["timestamp"].min()
+            h_mask = combined["timestamp"] >= h_start
+            h_slice = combined.loc[h_mask].reset_index(drop=True)
+            w_h = pd.Series(w_comb.loc[h_mask].to_numpy(), index=h_slice.index)
+            holdout_metrics = run_backtest(h_slice, w_h, fee_bps=5.0)
+        except Exception:
+            holdout_metrics = None
 
-    passed = (
+    passed = bool(
         causal_ok
         and dq.dqs >= 80.0
         and split_res["OOS"].sharpe > 0.0
@@ -233,6 +259,7 @@ def run_full_audit(
         and fee_curve.get(5.0, fee_curve[fee_grid_bps[0]]).mean_turnover > 1e-5
         and lag_res["passed"]
         and null_res["passed"]
+        and (holdout_metrics is None or holdout_metrics.sharpe > 0.0)
     )
 
     return {

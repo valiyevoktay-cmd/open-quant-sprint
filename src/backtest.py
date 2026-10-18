@@ -24,10 +24,22 @@ class BacktestMetrics:
 
 
 def coerce_weights(df: pd.DataFrame, weights: pd.Series | np.ndarray | list) -> pd.Series:
+    if len(weights) != len(df):
+        raise ValueError(f"Weight length ({len(weights)}) does not match DataFrame length ({len(df)})")
+
     if isinstance(weights, pd.Series):
-        if len(weights) != len(df):
-            raise ValueError(f"Weight length ({len(weights)}) does not match DataFrame length ({len(df)})")
-        s = weights.reindex(df.index) if weights.index.equals(df.index) else pd.Series(weights.to_numpy(), index=df.index)
+        if weights.index.equals(df.index):
+            s = weights.copy()
+        elif set(weights.index) == set(df.index) and len(weights.index) == len(df.index):
+            s = weights.reindex(df.index)
+        elif isinstance(weights.index, pd.RangeIndex) and isinstance(df.index, pd.RangeIndex):
+            s = weights.copy()
+            s.index = df.index
+        else:
+            raise ValueError(
+                f"Weights index does not match input DataFrame index. "
+                f"Ensure weights are returned aligned with `df.index`."
+            )
     else:
         arr = np.asarray(weights, dtype=np.float64)
         if arr.ndim != 1 or len(arr) != len(df):
@@ -58,7 +70,7 @@ def run_backtest(
     work["w_raw"] = coerce_weights(df, weights).to_numpy(dtype=np.float64)
 
     # Normalize gross exposure at each bar so sum(abs(w)) <= 1.0
-    gross = work.groupby("timestamp")["w_raw"].transform(lambda x: x.abs().sum())
+    gross = work["w_raw"].abs().groupby(work["timestamp"]).transform("sum")
     scale = np.where(gross > 1.0, 1.0 / gross, 1.0)
     work["w"] = work["w_raw"] * scale
 

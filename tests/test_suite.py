@@ -255,3 +255,19 @@ def test_funding_point_in_time_alignment(sample_panel: pd.DataFrame) -> None:
     report_bad = audit_dataset(corrupted)
     assert report_bad.funding_irregularities > 0
 
+
+def test_coerce_weights_and_crashing_strategy_protection(sample_panel: pd.DataFrame) -> None:
+    # 1. Mismatched index raises ValueError
+    bad_weights = pd.Series(np.ones(len(sample_panel)), index=pd.Index([f"id_{i}" for i in range(len(sample_panel))]))
+    with pytest.raises(ValueError, match="Weights index does not match input DataFrame index"):
+        coerce_weights(sample_panel, bad_weights)
+
+    # 2. Strategy that throws exception does not crash the audit runner
+    def crashing_strat(df: pd.DataFrame) -> pd.Series:
+        raise ZeroDivisionError("Simulated participant math error")
+
+    res = run_full_audit(sample_panel, crashing_strat)
+    assert res["passed"] is False
+    assert "Strategy execution crashed" in res["causality"]["detail"]
+
+

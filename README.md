@@ -12,7 +12,7 @@ Cross-sectional perpetual futures backtest and look-ahead audit harness.
 
 ```bash
 pip install -e ".[dev]"
-pytest
+python -m pytest
 ```
 
 ## Usage
@@ -20,6 +20,7 @@ pytest
 Audit a strategy file:
 
 ```bash
+python -m src.audit strategies/template.py
 python -m src.audit strategies/baseline_flow.py
 python -m src.audit strategies/leaky_example.py
 ```
