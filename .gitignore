@@ -5,3 +5,4 @@ __pycache__/
 .venv/
 venv/
 data/holdout_*.parquet
+PROJECT_CONTEXT.md
