@@ -1,0 +1,7 @@
+# Core Engine, Schema, Data & CI infrastructure require Lead Maintainer sign-off
+/src/backtest.py @valiyevoktay-cmd
+/src/audit.py @valiyevoktay-cmd
+/src/schema.py @valiyevoktay-cmd
+/data/ @valiyevoktay-cmd
+/.github/ @valiyevoktay-cmd
+/pyproject.toml @valiyevoktay-cmd

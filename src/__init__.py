@@ -1,0 +1,1 @@
+"""Syndicate quantitative validation harness."""
