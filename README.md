@@ -1,67 +1,124 @@
 # open-quant-sprint
 
-Cross-sectional perpetual futures backtest and look-ahead audit harness.
+Backtest and look-ahead audit harness for cross-sectional strategies on 20 Binance USD-M perpetuals (1h bars). Used for Sprint 01 (Nov 9 - Dec 7, 2026).
+
+Rules, timeline, verdict criteria: [`RULES.md`](RULES.md). Changes: [`CHANGELOG.md`](CHANGELOG.md).
+
+## Quick start
+
+Requires Python 3.10+.
+
+```bash
+git clone https://github.com/valiyevoktay-cmd/open-quant-sprint
+cd open-quant-sprint
+pip install -e ".[dev]"
+python -m pytest -q                               # expected: 21 passed, about 45 s
+python -m src.audit strategies/baseline_flow.py   # expected: FINAL VERDICT: [REJECT]
+```
+
+The baseline is expected to fail: see [Reference strategies](#reference-strategies).
+
+## Repository layout
+
+| Path | Contents |
+| --- | --- |
+| `data/train_1h.parquet` | Training panel, 297,420 rows |
+| `data/build_dataset.py` | Binance REST download, cleaning, train/holdout split |
+| `src/audit.py` | Audit CLI and verdict |
+| `src/backtest.py` | Vectorized backtest: fills, fees, funding |
+| `src/sandbox.py` | Runs each strategy call in a separate process |
+| `src/features.py` | Shared causal features |
+| `src/contrib/<name>.py` | Activation-PR features, one file per contributor |
+| `src/stats.py` | IC, Deflated Sharpe, bootstrap intervals |
+| `src/quality.py`, `src/schema.py` | Data quality score, column schema |
+| `strategies/` | Strategy files, one `compute_weights` each |
+| `tests/` | Pytest suite and reference fixtures |
 
 ## Dataset
 
-- `data/train_1h.parquet`: Binance USD-M Futures, 20 symbols, 1h bars (69,120 rows).
-- Columns: `timestamp`, `symbol`, `open`, `high`, `low`, `close`, `volume`, `quote_volume`, `taker_buy_quote_volume`, `trades`, `funding_rate`.
-- Rebuild or fetch latest bars: `python -m data.build_dataset --live --days 180`
+- 20 symbols, 1h bars, open times 2025-01-01 00:00 to 2026-09-12 14:00 UTC (14,871 hours).
+- Columns: `timestamp` (bar open, UTC), `symbol`, `open`, `high`, `low`, `close`, `volume`, `quote_volume`, `taker_buy_quote_volume`, `trades`, `funding_rate`.
+- `funding_rate` is non-zero only at 00:00, 08:00, 16:00 UTC.
+- The file in the repository is the reference dataset. Rebuild only to check it:
+  `python -m data.build_dataset --start 2025-01-01T00:00 --end 2026-09-12T15:00 --holdout-frac 0 --out-dir data/rebuild`
+- The holdout (Sep 12 - Oct 18, 2026) is not in the repository.
+- Offline synthetic panel: `python -m data.build_dataset --synthetic` (written to `data/synthetic/`).
 
-## Setup
+## Writing a strategy
 
-```bash
-pip install -e ".[dev]"
-python -m pytest
-```
-
-## Usage
-
-Audit a strategy file:
-
-```bash
-python -m src.audit strategies/template.py
-python -m src.audit strategies/baseline_flow.py
-python -m src.audit strategies/leaky_example.py
-```
-
-## Strategy Interface
-
-Create `strategies/<name>.py` implementing:
+`strategies/<name>.py`:
 
 ```python
 import pandas as pd
 
 def compute_weights(df: pd.DataFrame) -> pd.Series:
-    # Return target portfolio weights aligned with df.index.
-    # Gross exposure is normalized to sum(|w|) <= 1.0 per timestamp by the engine.
+    # df: 11 columns above, sorted by (timestamp, symbol).
+    # Return weights aligned with df.index. Gross exposure is scaled to sum(|w|) <= 1 per timestamp.
     ...
 ```
 
-## Audit Criteria
+- The weight at a row may use only rows with the same or earlier `timestamp`.
+- Use only the `df` argument: no files, network, environment, or state kept between calls.
+- No imports of `src.audit`, `src.backtest`, `src.sandbox`.
+- Same input, same output.
+- Start from `strategies/template.py`. Shared features: `src/features.py`.
 
-1. **Causality (`check_causality_truncation`)**: Prefix cuts at 40%, 65%, 85% of timeline must match full-run weights (`max|w_trunc - w_full| < 1e-9`). Non-deterministic or zero-weight outputs are rejected.
-2. **Lag Sensitivity Test**: Adds +1 bar execution delay (lag 2 vs lag 1). Distinguishes structural persistence from both algorithmic look-ahead leaks and unexecutable microstructure noise (short-horizon bid-ask bounce with half-life < 1h). Must retain >= 0% Sharpe.
-3. **Null Hypothesis Test**: Shuffles asset returns across time. If the pipeline still produces high absolute Sharpe (|SR| >= 0.75), it indicates a structural data processing leak.
-4. **Funding Regularity Check**: Validates point-in-time alignment of 8h settlement funding rates (hours 00, 08, 16 UTC).
-5. **Execution & Friction Breakdown**: 1-bar execution delay, historical 8h `funding_rate`, and linear transaction cost grid (`0, 3, 5, 10 bps`) with explicit Gross PnL, Fee Drag, and Funding Drag accounting.
-6. **Validation**: Purged 70/30 In-Sample / Out-of-Sample split (24h embargo) at `5.0 bps` taker fee. Requires `OOS Sharpe > 0` and `Full Sharpe @ 5 bps > 0`.
-7. **Wick & Mark Integrity (`audit_wick_vulnerability`)**: Verifies that strategy alpha does not depend on unfillable liquidation wicks or transient bad marks. Caps the fraction of positive gross PnL earned immediately following anomalous wick bars to <= 20.0%.
+Workflow:
 
-## Research Hygiene vs. Execution Simulation
+```bash
+git checkout -b feat/<name>
+python -m src.audit strategies/<name>.py
+git push origin feat/<name>     # open a PR; strategy PRs stay draft until Nov 9
+```
 
-This repository is built as an **adversarial research audit harness** designed to falsify quantitative signals and catch structural leaks prior to production capital allocation. It is not an order-matching or LOB execution simulator.
+CI runs the test suite and audits every strategy file changed in the PR, with the harness and data from `main`.
 
-### What the Harness Rigorously Verifies:
-1. **Mathematical Causality**: Prefix-slice invariance ($<10^{-9}$ weight divergence) preventing centered rolling windows, future index shifts, or whole-sample normalization.
-2. **Horizon & Microstructure Decay**: Stress-testing alpha under an incremental $+1$ bar delay ($t+2$). Distinguishes durable medium-horizon relative-value from fragile sub-hourly bid-ask bounce.
-3. **Discrete 8h Funding Settlement**: Funding cash flows assessed strictly against the position held across the discrete settlement boundary (`w_prev_held` at 00, 08, 16 UTC).
-4. **Liquidation Wick Vulnerability**: Gross PnL attribution gating ($\le 20\%$) to verify strategies do not harvest unfillable liquidation wicks or transient bad marks.
-5. **Multiple Testing Correction**: Bailey & López de Prado Deflated Sharpe Ratio (DSR, $N=10$) penalizing trial count and non-Gaussian return distributions.
+## Audit
 
-### Scope Boundaries (What is intentionally excluded):
-- **Limit Order Book (LOB) Dynamics**: Does not simulate queue position, cancel-to-fill ratios, or maker rebate economics.
-- **Non-Linear Market Impact**: Assumes conservative flat taker fees (5 bps) rather than square-root law / Almgren-Chriss impact scaling with ADV.
-- **Adverse Selection**: Assumes instantaneous execution at bar transition rather than modeling toxic flow against resting orders.
-- **Mark vs. Last Basis Drift**: Uses kline Close for return calculation, while exchange funding and margin calculations reference Mark Price.
+`python -m src.audit strategies/<name>.py` prints a report and exits with 0 on PASS, 1 on REJECT.
 
+| Check | PASS when |
+| --- | --- |
+| Causality | Weights on 8 prefixes (40, 65, 85, 95, 99 % and 3 random cuts) equal full-panel weights within 1e-9; repeated run identical; not all zero |
+| Data quality | DQS >= 80 |
+| Net Sharpe, 5 bps | > 0 on the full panel and on the last 30 % (after a 24h embargo) |
+| Lag test | One extra hour of delay keeps Sharpe > 0 |
+| Null check | Mean Sharpe over 200 daily-block permutations of returns within +-0.75 |
+| Wick check | <= 20 % of positive gross PnL from bars right after liquidation wicks |
+| Holdout (maintainer only) | Bar-by-bar weights equal one-shot weights; no crash. Sharpe is reported, not gated |
+
+Fills: signal on the close of bar t, filled at that close. Costs: flat grid 0, 3, 5, 10 bps plus a tiered row (BTC/ETH 5, six least liquid 10, others 7). Funding is charged on the position held across settlement. Every Sharpe has a 95 % block-bootstrap interval; on this panel it is about +-1.5.
+
+Block [13] lists code patterns for manual review. It does not affect the verdict.
+
+## Reference strategies
+
+Verdicts on the full training panel at 5 bps.
+
+| File | Purpose | Sharpe | Verdict |
+| --- | --- | --- | --- |
+| `baseline_flow.py` | Taker flow + breakout + funding. Designed on the last 144 days, where it scored +3.15 | -1.53 | REJECT |
+| `template.py` | Starting point: 24h momentum with deadband | -0.54 | REJECT |
+| `leaky_example.py` | Deliberate look-ahead, to show the causality check | -9.21 | REJECT (causality) |
+
+## Common failures
+
+| Report line | Usual cause | Fix |
+| --- | --- | --- |
+| `[2] ... Look-ahead leak detected` | Full-sample `mean()`/`std()`, `shift(-k)`, `rolling(center=True)` | Rolling or expanding windows only |
+| `[2] ... Non-deterministic` | Unseeded randomness | Fix the seed or remove it |
+| `[2] ... crashed: FileNotFoundError` | Strategy reads a file | Use only `df` |
+| Sharpe at 5 bps <= 0 | Turnover too high | `rebalance_deadband`, slower smoothing |
+| `[7] ... FAIL` | Signal decays within an hour | Longer horizon, slower features |
+| `[8] ... FAIL` | Sharpe comes from a static tilt | Centre weights per timestamp |
+| `[10] ... FAIL` | PnL from wick bars | Skip entries after extreme range bars |
+
+## Limits of the model
+
+- No order book, queue position or market impact; flat taker fees.
+- Returns use the last price; exchange funding and margin use the mark price.
+- The 20 symbols were chosen in 2026 among contracts liquid today (survivorship).
+
+## License
+
+Code: MIT ([`LICENSE`](LICENSE)). Market data in `data/`: see [`NOTICE.md`](NOTICE.md).

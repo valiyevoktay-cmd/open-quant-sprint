@@ -1,7 +1,19 @@
-# Core Engine, Schema, Data & CI infrastructure require Lead Maintainer sign-off
+# Core engine, schema, data, tests and CI require Lead Maintainer sign-off
 /src/backtest.py @valiyevoktay-cmd
 /src/audit.py @valiyevoktay-cmd
+/src/sandbox.py @valiyevoktay-cmd
 /src/schema.py @valiyevoktay-cmd
+/src/stats.py @valiyevoktay-cmd
+/src/features.py @valiyevoktay-cmd
 /data/ @valiyevoktay-cmd
+/tests/ @valiyevoktay-cmd
+/strategies/baseline_flow.py @valiyevoktay-cmd
+/strategies/template.py @valiyevoktay-cmd
+/strategies/leaky_example.py @valiyevoktay-cmd
+/benchmarks/ @valiyevoktay-cmd
 /.github/ @valiyevoktay-cmd
 /pyproject.toml @valiyevoktay-cmd
+/LICENSE @valiyevoktay-cmd
+/NOTICE.md @valiyevoktay-cmd
+/RULES.md @valiyevoktay-cmd
+/README.md @valiyevoktay-cmd

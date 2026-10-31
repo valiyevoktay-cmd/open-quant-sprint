@@ -192,30 +192,22 @@ def test_audit_passes_baseline_and_catches_leak(sample_panel: pd.DataFrame) -> N
     assert "Look-ahead leak detected" in msg_leak
 
 
-def test_real_binance_dataset_and_baseline_survival() -> None:
+def test_real_binance_dataset_and_baseline_harness_checks() -> None:
     train_path = Path("data/train_1h.parquet")
-    holdout_path = Path("data/holdout_1h.parquet")
     if not train_path.exists():
         pytest.skip("Real Binance dataset not present on disk")
 
     train_df = pd.read_parquet(train_path)
-    holdout_df = pd.read_parquet(holdout_path) if holdout_path.exists() else None
-
     baseline_fn = load_strategy_fn("strategies/baseline_flow.py")
-    res = run_full_audit(train_df, baseline_fn, holdout_df=holdout_df)
+    res = run_full_audit(train_df, baseline_fn)
 
     assert res["data_quality"].dqs >= 95.0
     assert res["data_quality"].timestamp_gaps == 0
     assert res["data_quality"].funding_irregularities == 0
     assert res["causality"]["passed"] is True
-    assert res["lag_sensitivity"]["passed"] is True
-    assert res["lag_sensitivity"]["sr_lag2"] > 0.0
     assert res["shuffled_null"]["passed"] is True
     assert abs(res["shuffled_null"]["null_sharpe"]) < 0.75
-    assert res["passed"] is True
-    if holdout_df is not None:
-        assert res["holdout"] is not None
-        assert res["holdout"].sharpe > 0.0
+    assert res["wick_integrity"]["passed"] is True
 
 
 def test_lag_sensitivity_and_shuffled_null(sample_panel: pd.DataFrame) -> None:
@@ -298,3 +290,158 @@ def test_wick_integrity_and_decoupled_failure_mode(sample_panel: pd.DataFrame) -
 
 
 
+
+
+def test_fetch_drops_unclosed_and_out_of_window_bars(monkeypatch: pytest.MonkeyPatch) -> None:
+    import data.build_dataset as bd
+
+    hour = 3_600_000
+    start = 1_792_324_800_000
+    now = start + 3 * hour + 600_000
+
+    def kline(open_ms: int) -> list:
+        return [open_ms, "1", "1", "1", "1", "1", open_ms + hour - 1, "1", 1, "0.5", "0.5", "0"]
+
+    def fake_get(url: str, retries: int = 3, backoff_sec: float = 1.0) -> list:
+        if "klines" in url and f"startTime={start}" in url:
+            return [kline(start + i * hour) for i in range(5)]
+        return []
+
+    monkeypatch.setattr(bd, "_http_get_json", fake_get)
+    monkeypatch.setattr(bd.time, "time", lambda: now / 1000.0)
+    monkeypatch.setattr(bd.time, "sleep", lambda s: None)
+    out = bd.fetch_binance_symbol_1h("BTCUSDT", start_ms=start, end_ms=start + 5 * hour)
+
+    expected = pd.to_datetime([start + i * hour for i in range(3)], unit="ms", utc=True)
+    assert list(out["timestamp"]) == list(expected)
+
+
+def test_build_refuses_to_overwrite_without_flag(tmp_path: Path) -> None:
+    from data.build_dataset import build_and_save
+
+    build_and_save(out_dir=tmp_path, live=False, days=10)
+    with pytest.raises(FileExistsError):
+        build_and_save(out_dir=tmp_path, live=False, days=10)
+    files = build_and_save(out_dir=tmp_path, live=False, days=10, overwrite=True)
+    assert all(f.exists() for f in files)
+
+
+def test_isolated_runner_matches_in_process(sample_panel: pd.DataFrame) -> None:
+    from src.sandbox import isolated_call
+
+    fn = load_strategy_fn("strategies/baseline_flow.py")
+    w_local = coerce_weights(sample_panel, fn(sample_panel.copy())).to_numpy()
+    w_isolated = isolated_call("strategies/baseline_flow.py", sample_panel)
+    assert np.array_equal(w_local, w_isolated)
+
+    ok, diff, _ = check_causality_truncation(sample_panel, "strategies/baseline_flow.py")
+    assert ok is True
+    assert diff == 0.0
+
+
+def test_isolated_runner_reports_crash(tmp_path: Path, sample_panel: pd.DataFrame) -> None:
+    from src.sandbox import StrategyError, isolated_call
+
+    bad = tmp_path / "bad.py"
+    bad.write_text("def compute_weights(df):\n    raise ValueError('boom')\n", encoding="utf-8")
+    with pytest.raises(StrategyError, match="boom"):
+        isolated_call(bad, sample_panel)
+
+    res = run_full_audit(sample_panel, bad)
+    assert res["passed"] is False
+    assert "Strategy execution crashed" in res["causality"]["detail"]
+
+
+def test_holdout_is_evaluated_bar_by_bar(sample_panel: pd.DataFrame) -> None:
+    from src.audit import evaluate_holdout
+
+    ts = np.sort(sample_panel["timestamp"].unique())
+    cut = ts[-25]
+    train = sample_panel.loc[sample_panel["timestamp"] <= cut].reset_index(drop=True)
+    holdout = sample_panel.loc[sample_panel["timestamp"] > cut].reset_index(drop=True)
+    n_train_hours = train["timestamp"].nunique()
+
+    baseline_fn = load_strategy_fn("strategies/baseline_flow.py")
+    ok = evaluate_holdout(train, holdout, baseline_fn)
+    assert ok["status"] == "ok"
+    assert ok["leak_diff"] == 0.0
+
+    def peeks_only_past_train(df: pd.DataFrame) -> pd.Series:
+        w = baseline_fn(df)
+        if df["timestamp"].nunique() > n_train_hours + 1:
+            fwd = df.groupby("symbol")["close"].pct_change().groupby(df["symbol"]).shift(-1).fillna(0.0)
+            w = w + cross_sectional_zscore(df, fwd)
+        return w
+
+    leak = evaluate_holdout(train, holdout, peeks_only_past_train)
+    assert leak["status"] == "leak"
+
+    def crashes_on_holdout(df: pd.DataFrame) -> pd.Series:
+        if df["timestamp"].nunique() > n_train_hours:
+            raise RuntimeError("holdout crash")
+        return baseline_fn(df)
+
+    crash = evaluate_holdout(train, holdout, crashes_on_holdout)
+    assert crash["status"] == "error"
+    res = run_full_audit(train, crashes_on_holdout, holdout_df=holdout)
+    assert res["passed"] is False
+
+
+def test_baseline_weights_match_reference_fixture() -> None:
+    train_path = Path("data/train_1h.parquet")
+    fixture = Path("tests/fixtures/baseline_weights.parquet")
+    if not train_path.exists():
+        pytest.skip("Real Binance dataset not present on disk")
+
+    df = enforce_schema(pd.read_parquet(train_path))
+    w = load_strategy_fn("strategies/baseline_flow.py")(df.copy()).to_numpy(dtype=np.float64)
+    ref = pd.read_parquet(fixture)["w"].to_numpy(dtype=np.float64)
+    assert len(w) == len(ref)
+    assert np.allclose(w, ref, atol=1e-10, rtol=0.0)
+
+
+def test_tiered_fees_are_causal(sample_panel: pd.DataFrame) -> None:
+    from src.backtest import tiered_fee_bps
+
+    full = tiered_fee_bps(sample_panel, window=48, n_low=2)
+    ts = np.sort(sample_panel["timestamp"].unique())
+    prefix = sample_panel.loc[sample_panel["timestamp"] <= ts[300]].reset_index(drop=True)
+    part = tiered_fee_bps(prefix, window=48, n_low=2)
+    assert np.array_equal(full[: len(part)], part)
+    assert set(np.unique(full[sample_panel["symbol"].isin(["BTCUSDT", "ETHUSDT"]).to_numpy()])) == {5.0}
+
+    w = cross_sectional_zscore(sample_panel, taker_flow_imbalance(sample_panel, span=12))
+    m_flat = run_backtest(sample_panel, w, fee_bps=5.0)
+    m_tier = run_backtest(sample_panel, w, fee_bps=full)
+    assert m_tier.fee_cost_cum >= m_flat.fee_cost_cum
+
+
+def test_sharpe_interval_contains_point_estimate(sample_panel: pd.DataFrame) -> None:
+    w = cross_sectional_zscore(sample_panel, taker_flow_imbalance(sample_panel, span=12))
+    m = run_backtest(sample_panel, w, fee_bps=0.0)
+    assert m.sharpe_ci_low < m.sharpe < m.sharpe_ci_high
+
+
+def test_null_check_is_stable_across_seeds() -> None:
+    train_path = Path("data/train_1h.parquet")
+    if not train_path.exists():
+        pytest.skip("Real Binance dataset not present on disk")
+
+    from src.audit import evaluate_shuffled_null
+
+    df = enforce_schema(pd.read_parquet(train_path))
+    w = load_strategy_fn("strategies/baseline_flow.py")(df.copy())
+    assert all(evaluate_shuffled_null(df, w, seed=s)["passed"] for s in range(5))
+
+
+def test_cli_rejects_missing_holdout_path() -> None:
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "src.audit", "strategies/baseline_flow.py", "--holdout", "data/no_such_file.parquet"],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "holdout file not found" in proc.stderr

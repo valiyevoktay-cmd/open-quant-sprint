@@ -168,3 +168,34 @@ def information_coefficient(df: pd.DataFrame, weights: pd.Series) -> dict[str, f
         "p_value": round(p_val, 5),
     }
 
+
+
+def sharpe_block_bootstrap_ci(
+    returns: np.ndarray,
+    periods_per_year: int = 8760,
+    block: int = 24,
+    n_boot: int = 1000,
+    level: float = 0.95,
+    seed: int = 0,
+) -> tuple[float, float]:
+    """
+    Moving-block bootstrap interval for the annualized Sharpe ratio.
+    Blocks of `block` bars keep intraday autocorrelation inside each resample.
+    """
+    r = np.asarray(returns, dtype=np.float64)
+    r = r[~np.isnan(r)]
+    n = len(r)
+    if n < 2 * block:
+        return float("nan"), float("nan")
+
+    rng = np.random.default_rng(seed)
+    n_blocks = int(np.ceil(n / block))
+    starts = rng.integers(0, n - block + 1, size=(n_boot, n_blocks))
+    idx = (starts[:, :, None] + np.arange(block)[None, None, :]).reshape(n_boot, -1)[:, :n]
+    sample = r[idx]
+    mean = sample.mean(axis=1)
+    std = sample.std(axis=1, ddof=1)
+    sr = np.where(std > 1e-12, mean / np.where(std > 1e-12, std, 1.0) * np.sqrt(periods_per_year), 0.0)
+    alpha = (1.0 - level) / 2.0
+    lo, hi = np.quantile(sr, [alpha, 1.0 - alpha])
+    return round(float(lo), 2), round(float(hi), 2)

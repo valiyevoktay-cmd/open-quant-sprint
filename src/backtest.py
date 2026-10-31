@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from src.stats import deflated_sharpe_ratio
+from src.stats import deflated_sharpe_ratio, sharpe_block_bootstrap_ci
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,8 @@ class BacktestMetrics:
     gross_pnl_cum: float = 0.0
     fee_cost_cum: float = 0.0
     funding_cost_cum: float = 0.0
+    sharpe_ci_low: float = float("nan")
+    sharpe_ci_high: float = float("nan")
 
 
 def coerce_weights(df: pd.DataFrame, weights: pd.Series | np.ndarray | list) -> pd.Series:
@@ -49,10 +51,37 @@ def coerce_weights(df: pd.DataFrame, weights: pd.Series | np.ndarray | list) -> 
     return s.astype(np.float64).replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
 
+TIER_BASE_SYMBOLS = ("BTCUSDT", "ETHUSDT")
+
+
+def tiered_fee_bps(
+    df: pd.DataFrame,
+    window: int = 720,
+    base_bps: float = 5.0,
+    mid_bps: float = 7.0,
+    low_bps: float = 10.0,
+    n_low: int = 6,
+) -> np.ndarray:
+    """
+    Per-row taker cost by liquidity tier. BTC and ETH pay base_bps; among the other symbols the n_low
+    with the lowest trailing mean quote_volume pay low_bps, the rest mid_bps. The trailing mean is
+    shifted by one bar, so the tier at bar t uses volume up to t-1 only.
+    """
+    qv = df.groupby("symbol")["quote_volume"].transform(
+        lambda x: x.rolling(window=window, min_periods=1).mean().shift(1)
+    )
+    is_base = df["symbol"].isin(TIER_BASE_SYMBOLS).to_numpy()
+    rank_low = qv.where(~is_base).groupby(df["timestamp"]).rank(method="first", ascending=True)
+    fee = np.full(len(df), mid_bps, dtype=np.float64)
+    fee[(rank_low <= n_low).to_numpy()] = low_bps
+    fee[is_base] = base_bps
+    return fee
+
+
 def run_backtest(
     df: pd.DataFrame,
     weights: pd.Series | np.ndarray,
-    fee_bps: float = 5.0,
+    fee_bps: float | np.ndarray = 5.0,
     include_funding: bool = True,
     periods_per_year: int = 8760,
     n_trials: int = 10,
@@ -81,7 +110,11 @@ def run_backtest(
     work["ret"] = work.groupby("symbol")["close"].pct_change().fillna(0.0)
     work["turnover"] = (work["w_held"] - work["w_prev_held"]).abs()
 
-    fee_rate = fee_bps * 1e-4
+    fee_arr = np.asarray(fee_bps, dtype=np.float64)
+    if fee_arr.ndim == 1 and len(fee_arr) != len(df):
+        raise ValueError(f"Per-row fee array length ({len(fee_arr)}) does not match DataFrame length ({len(df)})")
+    fee_rate = fee_arr * 1e-4
+    fee_label = float(fee_arr) if fee_arr.ndim == 0 else round(float(np.mean(fee_arr)), 2)
     work["gross_pnl"] = work["w_held"] * work["ret"]
     work["fee_cost"] = work["turnover"] * fee_rate
     # Long pays positive funding rate, short receives positive funding rate.
@@ -96,7 +129,7 @@ def run_backtest(
 
     r = by_ts["port_ret"].to_numpy(dtype=np.float64)
     if len(r) < 2:
-        return BacktestMetrics(fee_bps, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, r)
+        return BacktestMetrics(fee_label, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, r)
 
     mean_r = float(np.mean(r))
     std_r = float(np.std(r, ddof=1))
@@ -109,9 +142,10 @@ def run_backtest(
     peak = np.maximum.accumulate(np.insert(equity, 0, 0.0))[1:]
     dd = equity - peak
     max_dd = float(np.min(dd)) if len(dd) > 0 else 0.0
+    ci_low, ci_high = sharpe_block_bootstrap_ci(r, periods_per_year=periods_per_year)
 
     return BacktestMetrics(
-        fee_bps=float(fee_bps),
+        fee_bps=fee_label,
         ann_return=round(ann_ret, 4),
         ann_vol=round(ann_vol, 4),
         sharpe=round(sharpe, 3),
@@ -123,5 +157,7 @@ def run_backtest(
         gross_pnl_cum=round(float(work["gross_pnl"].sum()), 4),
         fee_cost_cum=round(float(work["fee_cost"].sum()), 4),
         funding_cost_cum=round(float(work["funding_cost"].sum()), 4) if include_funding else 0.0,
+        sharpe_ci_low=ci_low,
+        sharpe_ci_high=ci_high,
     )
 

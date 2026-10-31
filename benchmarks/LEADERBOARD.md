@@ -1,18 +1,20 @@
 # Syndicate Sprint 01 — Reproducible Benchmark Leaderboard
 
-All strategies are evaluated via `python -m src.audit <strategy_file>` on `data/train_1h.parquet` (20 Binance perpetual futures, 69,120 hourly rows) under a mandatory **1-bar execution delay (`lag_bars=1`)**, **5.0 bps taker fee**, **8-hour funding rate accounting**, and **70/30 Purged Walk-Forward Split (24h embargo)**.
+All strategies are evaluated via `python -m src.audit <strategy_file>` on `data/train_1h.parquet` (20 Binance perpetual futures, 297,420 hourly rows, 2025-01-01 to 2026-09-12) with **fills at the close of the signal bar (`lag_bars=1`)**, **5.0 bps taker fee**, **8-hour funding rate accounting**, and **70/30 Purged Walk-Forward Split (24h embargo)**.
 
-Final out-of-sample evaluation against the sealed `data/holdout_1h.parquet` vault is executed offline at the conclusion of the sprint (November 22).
+Holdout (Sep 12 - Oct 18, public Binance data) is evaluated once on Nov 22 as a preliminary report. The final report uses the forward period Nov 22 - Dec 6 on code frozen at `sprint-01-freeze` (see `RULES.md`). Sharpe ratios are shown with 95 % block-bootstrap intervals; on these sample lengths an interval that includes 0 is the normal case.
 
 ## Active Strategy Benchmark (`data/train_1h.parquet` @ 5.0 bps Taker Fee)
 
-| Strategy Module | Contributor | Causal Check (`tol=1e-9`) | Full Sharpe (5 bps) | Purged IS Sharpe | Purged OOS Sharpe | DSR ($N=10$) | MaxDD | Mean Turnover | Lag-2 Retention | Runtime (ms) | Status |
+| Strategy Module | Contributor | Causal Check (`tol=1e-9`) | Full Sharpe (5 bps) [95% CI] | Purged IS Sharpe | Purged OOS Sharpe | DSR ($N=10$) | MaxDD | Mean Turnover | Lag-2 Retention | Runtime (ms) | Status |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| [`strategies/baseline_flow.py`](../strategies/baseline_flow.py) | Baseline | `0.00e+00` | `+3.15` | `+2.98` | `+4.19` | `0.901` | `-8.15%` | `0.0504` | `99.7%` | `106.2 ms` | **PASS** |
+| [`strategies/baseline_flow.py`](../strategies/baseline_flow.py) | Baseline | `0.00e+00` | `-1.53` [-3.00, +0.07] | `-3.04` | `+2.17` | `0.000` | `-68.56%` | `0.0522` | n/a (lag-1 SR < 0) | `535 ms` | **REJECT** |
 | `strategies/janice_diffusion.py` | Janice Jizhe | — | — | — | — | — | — | — | — | — | *Pending* |
 | `strategies/edwin_statarb.py` | Edwin Gregory | — | — | — | — | — | — | — | — | — | *Pending* |
 | `strategies/krishhiv_flow_alpha.py` | Krishhiv Mehra | — | — | — | — | — | — | — | — | — | *Pending* |
 | `strategies/aarya_regime_sync.py` | Aarya Pakhale | — | — | — | — | — | — | — | — | — | *Pending* |
+
+`baseline_flow.py` was designed on the last 144 days of the panel (Sharpe +3.15 at 5 bps there). It is kept unchanged as a reference and does not pass on the full history.
 
 ## Core Infrastructure & Compute Benchmarks
 

@@ -5,5 +5,9 @@ __pycache__/
 .venv/
 venv/
 data/holdout_*.parquet
+data/synthetic/
+data/forward/
 PROJECT_CONTEXT.md
 cohort/
+second-brain/
+_private/

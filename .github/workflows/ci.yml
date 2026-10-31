@@ -13,17 +13,27 @@ jobs:
   verify:
     name: Pytest & 7-Stage Causal Audit
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
+
+      - name: Use harness, data and tests from main for contributor pull requests
+        if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'valiyevoktay-cmd'
+        run: |
+          git fetch origin main
+          git checkout origin/main -- src/audit.py src/backtest.py src/sandbox.py src/schema.py src/stats.py data tests/fixtures
+          mkdir -p ci_main_tests
+          git show origin/main:tests/test_suite.py > ci_main_tests/test_suite_main.py
 
       - name: Install dependencies
         run: |
@@ -32,8 +42,35 @@ jobs:
 
       - name: Run unit & regression test suite
         run: |
-          python -m pytest -v
+          python -m pytest -v tests $(test -d ci_main_tests && echo ci_main_tests)
 
-      - name: Run baseline causal audit
+      - name: Audit strategies
         run: |
-          python -m src.audit strategies/baseline_flow.py
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            files=$(git diff --name-only --diff-filter=AM origin/main...HEAD -- 'strategies/*.py' || true)
+          else
+            files=$(ls strategies/*.py | grep -v -e template.py -e leaky_example.py -e baseline_flow.py || true)
+          fi
+          status=0
+          for f in $files; do
+            echo "### $f" >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            rc=0
+            python -m src.audit "$f" > audit_report.txt 2>&1 || rc=$?
+            cat audit_report.txt
+            cat audit_report.txt >> "$GITHUB_STEP_SUMMARY"
+            if [ "$rc" -ne 0 ]; then status=1; fi
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          done
+          if [ -z "$files" ]; then echo "No contributed strategy files to audit." >> "$GITHUB_STEP_SUMMARY"; fi
+          exit $status
+
+      - name: Reference audit of baseline_flow.py (informational)
+        if: github.event_name == 'push'
+        run: |
+          echo "### strategies/baseline_flow.py (reference, does not gate CI)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          python -m src.audit strategies/baseline_flow.py > audit_report.txt 2>&1 || true
+          cat audit_report.txt
+          cat audit_report.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

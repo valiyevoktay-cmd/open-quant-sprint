@@ -54,13 +54,15 @@ def _http_get_json(url: str, retries: int = 3, backoff_sec: float = 1.0) -> list
 
 
 def fetch_binance_symbol_1h(symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
+    """Download 1h klines with open_time in [start_ms, end_ms). Bars that have not closed yet are dropped."""
     klines: list[list] = []
     cursor = start_ms
     step_ms = 3600 * 1000
+    now_ms = int(time.time() * 1000)
 
     while cursor < end_ms:
         params = urllib.parse.urlencode(
-            {"symbol": symbol, "interval": "1h", "startTime": cursor, "endTime": end_ms, "limit": 1500}
+            {"symbol": symbol, "interval": "1h", "startTime": cursor, "endTime": end_ms - 1, "limit": 1500}
         )
         batch = _http_get_json(f"{BINANCE_FAPI_BASE}/fapi/v1/klines?{params}")
         if not batch:
@@ -72,11 +74,13 @@ def fetch_binance_symbol_1h(symbol: str, start_ms: int, end_ms: int) -> pd.DataF
         cursor = last_open + step_ms
         time.sleep(0.12)
 
+    klines = [k for k in klines if start_ms <= int(k[0]) < end_ms and int(k[6]) < now_ms]
+
     f_rows: list[dict] = []
     f_cursor = start_ms
     while f_cursor < end_ms:
         params = urllib.parse.urlencode(
-            {"symbol": symbol, "startTime": f_cursor, "endTime": end_ms, "limit": 1000}
+            {"symbol": symbol, "startTime": f_cursor, "endTime": end_ms - 1, "limit": 1000}
         )
         batch = _http_get_json(f"{BINANCE_FAPI_BASE}/fapi/v1/fundingRate?{params}")
         if not batch:
@@ -179,19 +183,47 @@ def generate_calibrated_panel(
     return autoclean_market_data(panel)
 
 
+def _parse_utc_ms(value: str) -> int:
+    ts = pd.Timestamp(value)
+    ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+    if ts != ts.floor("h"):
+        raise ValueError(f"Timestamp must be on a full hour (UTC): {value}")
+    return int(ts.value // 1_000_000)
+
+
+def _write_parquet(df: pd.DataFrame, path: Path, overwrite: bool) -> None:
+    if path.exists() and not overwrite:
+        raise FileExistsError(f"{path} already exists. Pass --overwrite to replace it.")
+    df.to_parquet(path, compression="zstd", index=False)
+
+
 def build_and_save(
-    out_dir: str | Path = "data",
+    out_dir: str | Path | None = None,
     live: bool = True,
     days: int = 180,
     holdout_frac: float = 0.20,
-) -> tuple[Path, Path]:
+    start: str | None = None,
+    end: str | None = None,
+    overwrite: bool = False,
+) -> list[Path]:
+    """
+    Live mode: open_time in [start, end) UTC. Without --start/--end the window is the last `days` days
+    ending at the last fully closed hour, which is not reproducible; pass explicit bounds for a fixed dataset.
+    holdout_frac=0 writes a single panel_1h.parquet instead of a train/holdout split.
+    """
+    if out_dir is None:
+        out_dir = "data" if live else "data/synthetic"
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    panel: pd.DataFrame | None = None
     if live:
-        end_ms = int(time.time() * 1000)
-        start_ms = end_ms - days * 86400 * 1000
+        if end is not None:
+            end_ms = _parse_utc_ms(end)
+        else:
+            end_ms = int(pd.Timestamp.now(tz="UTC").floor("h").value // 1_000_000)
+        start_ms = _parse_utc_ms(start) if start is not None else end_ms - days * 86400 * 1000
+        if start_ms >= end_ms:
+            raise ValueError("--start must be earlier than --end")
         chunks = []
         try:
             for sym in DEFAULT_SYMBOLS:
@@ -203,14 +235,19 @@ def build_and_save(
                 f"Live Binance Futures API fetch failed ({exc}). "
                 "If you explicitly want an offline synthetic dataset, pass --synthetic."
             ) from exc
-
-    if panel is None:
+    else:
         print("Generating calibrated synthetic panel (--synthetic mode)...")
         panel = generate_calibrated_panel(n_hours=days * 24)
 
     panel = enforce_schema(panel)
     dq = audit_dataset(panel)
     print(f"Dataset built: rows={dq.total_rows:,}, symbols={dq.n_symbols}, DQS={dq.dqs}/100 ({dq.status})")
+
+    if holdout_frac <= 0.0:
+        panel_file = out_path / "panel_1h.parquet"
+        _write_parquet(panel, panel_file, overwrite)
+        print(f"Saved panel   : {panel_file} ({len(panel):,} rows)")
+        return [panel_file]
 
     unique_ts = np.sort(panel["timestamp"].unique())
     cut_idx = int(len(unique_ts) * (1.0 - holdout_frac))
@@ -221,25 +258,39 @@ def build_and_save(
 
     train_file = out_path / "train_1h.parquet"
     holdout_file = out_path / "holdout_1h.parquet"
+    for f in (train_file, holdout_file):
+        if f.exists() and not overwrite:
+            raise FileExistsError(f"{f} already exists. Pass --overwrite to replace it.")
 
-    train_df.to_parquet(train_file, compression="zstd", index=False)
-    holdout_df.to_parquet(holdout_file, compression="zstd", index=False)
+    _write_parquet(train_df, train_file, overwrite)
+    _write_parquet(holdout_df, holdout_file, overwrite)
 
     print(f"Saved train   : {train_file} ({train_file.stat().st_size / 1024:.1f} KB, {len(train_df):,} rows)")
     print(f"Saved holdout : {holdout_file} ({holdout_file.stat().st_size / 1024:.1f} KB, {len(holdout_df):,} rows)")
-    return train_file, holdout_file
+    return [train_file, holdout_file]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build cleaned 1h parquet datasets for Syndicate sprint.")
     parser.add_argument("--live", action="store_true", help="Download live Binance Futures data (default behavior)")
-    parser.add_argument("--synthetic", action="store_true", help="Generate synthetic mock panel instead of downloading live Binance data")
-    parser.add_argument("--days", type=int, default=180, help="Number of days of 1h bars to build (default: 180)")
-    parser.add_argument("--out-dir", default="data", help="Output directory for parquet files")
+    parser.add_argument("--synthetic", action="store_true", help="Generate a synthetic panel into data/synthetic/")
+    parser.add_argument("--start", default=None, help="First bar open time, UTC, e.g. 2026-04-21T15:00")
+    parser.add_argument("--end", default=None, help="Exclusive end of the window, UTC, e.g. 2026-10-18T15:00")
+    parser.add_argument("--days", type=int, default=180, help="Window length when --start is not given (default: 180)")
+    parser.add_argument("--holdout-frac", type=float, default=0.20, help="Holdout share; 0 writes one panel_1h.parquet")
+    parser.add_argument("--out-dir", default=None, help="Output directory (default: data/, or data/synthetic/ with --synthetic)")
+    parser.add_argument("--overwrite", action="store_true", help="Allow replacing existing parquet files")
     args = parser.parse_args()
 
-    live_flag = False if args.synthetic else True
-    build_and_save(out_dir=args.out_dir, live=live_flag, days=args.days)
+    build_and_save(
+        out_dir=args.out_dir,
+        live=not args.synthetic,
+        days=args.days,
+        holdout_frac=args.holdout_frac,
+        start=args.start,
+        end=args.end,
+        overwrite=args.overwrite,
+    )
     return 0
 
 
