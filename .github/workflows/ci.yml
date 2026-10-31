@@ -27,27 +27,41 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Use harness, data and tests from main for contributor pull requests
+      - name: Use main for everything except contributed strategy and contrib files
         if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'valiyevoktay-cmd'
         run: |
           git fetch origin main
-          git checkout origin/main -- src/audit.py src/backtest.py src/sandbox.py src/schema.py src/stats.py data tests/fixtures
-          mkdir -p ci_main_tests
-          git show origin/main:tests/test_suite.py > ci_main_tests/test_suite_main.py
+          changed=$(git diff --name-only --diff-filter=AMR origin/main...HEAD)
+          allowed=$(printf '%s\n' "$changed" \
+            | grep -E '^(strategies|src/contrib)/[A-Za-z0-9_]+\.py$' \
+            | grep -v -E '^(strategies/(template|baseline_flow|leaky_example)|src/contrib/__init__)\.py$' || true)
+          keep="$RUNNER_TEMP/pr_files"
+          mkdir -p "$keep"
+          for f in $allowed; do mkdir -p "$keep/$(dirname "$f")"; cp "$f" "$keep/$f"; done
+          git checkout --detach origin/main
+          cp -R "$keep/." .
+          printf '%s\n' "$allowed" | grep -E '^strategies/' > "$RUNNER_TEMP/pr_strategies.txt" || true
+          echo "Files taken from the pull request:" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$allowed" | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Install dependencies
+      - name: Install pinned dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -r requirements.lock
+          pip install -e . --no-deps
 
       - name: Run unit & regression test suite
         run: |
-          python -m pytest -v tests $(test -d ci_main_tests && echo ci_main_tests)
+          python -m pytest -v tests
 
       - name: Audit strategies
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            files=$(git diff --name-only --diff-filter=AM origin/main...HEAD -- 'strategies/*.py' || true)
+            if [ -f "$RUNNER_TEMP/pr_strategies.txt" ]; then
+              files=$(cat "$RUNNER_TEMP/pr_strategies.txt")
+            else
+              files=$(git diff --name-only --diff-filter=AMR origin/main...HEAD -- 'strategies/*.py' || true)
+            fi
           else
             files=$(ls strategies/*.py | grep -v -e template.py -e leaky_example.py -e baseline_flow.py || true)
           fi

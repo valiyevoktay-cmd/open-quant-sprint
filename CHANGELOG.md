@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.1 (2026-10-31)
+
+Audit (`src/audit.py`, audit version 1.1.0)
+- The last full bar is always a causality cut. In v1.0 the last 148 hours were never compared, so a leak confined to them passed.
+- Random cuts use a fresh seed on every run (was fixed seed 0, so the cut timestamps could be computed and avoided) and there are 8 of them instead of 3. The report prints the seed; `--seed` reproduces a run, `--n-random-cuts` sets the number of cuts.
+- Two canary strategies that passed v1.0 (`tests/fixtures/tail_peek.py`, `tests/fixtures/known_cuts_peek.py`) are now tests that must be rejected.
+
+Rules and documentation
+- `RULES.md`: measured interval half-widths (+-6 holdout, +-9 forward; were stated as +-3 and +-5), what PASS means, the official verdict protocol (maintainer run on the frozen file, 60 random cuts, forward run without data or network access), results reported without a ranking.
+- `LIMITATIONS.md` lists the known gaps of the audit.
+- Pull request template no longer asks for a PASS: any verdict is acceptable.
+
+Repository
+- CI takes only contributed files under `strategies/` and `src/contrib/` from a pull request and everything else from `main` (v1.0 restored a fixed list and missed `src/__init__.py`, `tests/conftest.py` and `pyproject.toml`). Renamed strategy files are audited too.
+- `CODEOWNERS` covers the whole repository except contributed strategies and contrib files.
+- `requirements.lock` pins the dependency versions used by CI; Python 3.11+.
+
 ## v1.0 (2026-10-30)
 
 Audit (`src/audit.py`, `src/sandbox.py`)

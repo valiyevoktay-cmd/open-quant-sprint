@@ -2,17 +2,20 @@
 
 Backtest and look-ahead audit harness for cross-sectional strategies on 20 Binance USD-M perpetuals (1h bars). Used for Sprint 01 (Nov 9 - Dec 7, 2026).
 
-Rules, timeline, verdict criteria: [`RULES.md`](RULES.md). Changes: [`CHANGELOG.md`](CHANGELOG.md).
+Rules, timeline, verdict criteria: [`RULES.md`](RULES.md). Known gaps: [`LIMITATIONS.md`](LIMITATIONS.md). Changes: [`CHANGELOG.md`](CHANGELOG.md).
+
+The audit catches common look-ahead mistakes; it is not secure against deliberate cheating, and a PASS is a hygiene check, not evidence of an edge (see [Audit](#audit)).
 
 ## Quick start
 
-Requires Python 3.10+.
+Requires Python 3.11+.
 
 ```bash
 git clone https://github.com/valiyevoktay-cmd/open-quant-sprint
 cd open-quant-sprint
-pip install -e ".[dev]"
-python -m pytest -q                               # expected: 21 passed, about 45 s
+pip install -r requirements.lock                  # exact versions used by CI
+pip install -e . --no-deps
+python -m pytest -q                               # expected: 24 passed, about 90 s
 python -m src.audit strategies/baseline_flow.py   # expected: FINAL VERDICT: [REJECT]
 ```
 
@@ -71,7 +74,7 @@ python -m src.audit strategies/<name>.py
 git push origin feat/<name>     # open a PR; strategy PRs stay draft until Nov 9
 ```
 
-CI runs the test suite and audits every strategy file changed in the PR, with the harness and data from `main`.
+CI runs the test suite and audits every strategy file added, changed or renamed in the PR. Only your files under `strategies/` and `src/contrib/` are taken from the PR; everything else comes from `main`. CI is a convenience: the official verdict is the maintainer's run described in `RULES.md`.
 
 ## Audit
 
@@ -79,7 +82,7 @@ CI runs the test suite and audits every strategy file changed in the PR, with th
 
 | Check | PASS when |
 | --- | --- |
-| Causality | Weights on 8 prefixes (40, 65, 85, 95, 99 % and 3 random cuts) equal full-panel weights within 1e-9; repeated run identical; not all zero |
+| Causality | Weights on prefixes (last full bar, 40, 65, 85, 95, 99 % and 8 random cuts with a fresh seed) equal full-panel weights within 1e-9; repeated run identical; not all zero |
 | Data quality | DQS >= 80 |
 | Net Sharpe, 5 bps | > 0 on the full panel and on the last 30 % (after a 24h embargo) |
 | Lag test | One extra hour of delay keeps Sharpe > 0 |
@@ -87,9 +90,13 @@ CI runs the test suite and audits every strategy file changed in the PR, with th
 | Wick check | <= 20 % of positive gross PnL from bars right after liquidation wicks |
 | Holdout (maintainer only) | Bar-by-bar weights equal one-shot weights; no crash. Sharpe is reported, not gated |
 
-Fills: signal on the close of bar t, filled at that close. Costs: flat grid 0, 3, 5, 10 bps plus a tiered row (BTC/ETH 5, six least liquid 10, others 7). Funding is charged on the position held across settlement. Every Sharpe has a 95 % block-bootstrap interval; on this panel it is about +-1.5.
+Fills: signal on the close of bar t, filled at that close. Costs: flat grid 0, 3, 5, 10 bps plus a tiered row (BTC/ETH 5, six least liquid 10, others 7). Funding is charged on the position held across settlement. Every Sharpe has a 95 % block-bootstrap interval: about +-1.5 on this panel, +-6 on the holdout, +-9 on the forward period.
 
-Block [13] lists code patterns for manual review. It does not affect the verdict.
+PASS means causal on the tested cuts, reproducible and positive after costs. It is not evidence of an edge: 7 % of random combinations of standard features pass, none with an interval above zero.
+
+The report prints the causality seed. `--seed <n>` reproduces a run; `--n-random-cuts <k>` tests more cuts (the official run uses 60).
+
+Block [13] lists code patterns for manual review. It does not affect the verdict and is easy to evade; every strategy is also read by hand.
 
 ## Reference strategies
 
@@ -118,6 +125,7 @@ Verdicts on the full training panel at 5 bps.
 - No order book, queue position or market impact; flat taker fees.
 - Returns use the last price; exchange funding and margin use the mark price.
 - The 20 symbols were chosen in 2026 among contracts liquid today (survivorship).
+- Limits of the audit itself: [`LIMITATIONS.md`](LIMITATIONS.md).
 
 ## License
 

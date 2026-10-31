@@ -434,6 +434,28 @@ def test_null_check_is_stable_across_seeds() -> None:
     assert all(evaluate_shuffled_null(df, w, seed=s)["passed"] for s in range(5))
 
 
+def test_cut_points_always_include_last_full_bar_and_vary_with_seed() -> None:
+    from src.audit import causality_cut_points
+
+    for seed in range(5):
+        assert causality_cut_points(14871, seed=seed)[-1] == 14869
+    assert causality_cut_points(14871, seed=1) != causality_cut_points(14871, seed=2)
+    assert causality_cut_points(14871, seed=3) == causality_cut_points(14871, seed=3)
+
+
+@pytest.mark.parametrize("canary", ["tail_peek.py", "known_cuts_peek.py"])
+def test_causality_rejects_leaks_written_around_cut_points(canary: str) -> None:
+    train_path = Path("data/train_1h.parquet")
+    if not train_path.exists():
+        pytest.skip("Real Binance dataset not present on disk")
+
+    df = enforce_schema(pd.read_parquet(train_path))
+    fn = load_strategy_fn(Path("tests/fixtures") / canary)
+    ok, _, msg = check_causality_truncation(df, fn, seed=1)
+    assert ok is False, msg
+    assert "Look-ahead leak detected" in msg
+
+
 def test_cli_rejects_missing_holdout_path() -> None:
     import subprocess
     import sys

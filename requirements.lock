@@ -1,0 +1,15 @@
+# Exact versions used by CI and by the organizer's official audit runs (Python 3.11+).
+# The baseline fixture is compared at atol 1e-10, so library upgrades go through a PR that updates this file.
+numpy==2.4.6
+pandas==3.0.3
+scipy==1.17.1
+pyarrow==25.0.0
+python-dateutil==2.9.0.post0
+six==1.17.0
+tzdata==2026.2
+pytest==9.1.1
+iniconfig==2.3.0
+packaging==26.2
+pluggy==1.6.0
+Pygments==2.20.0
+colorama==0.4.6; sys_platform == "win32"

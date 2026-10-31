@@ -19,7 +19,7 @@ from src.sandbox import isolated_call, isolated_call_timed, isolated_stream, loa
 from src.schema import enforce_schema
 from src.stats import information_coefficient
 
-AUDIT_VERSION = "1.0.0"
+AUDIT_VERSION = "1.1.0"
 
 StrategyFn = Callable[[pd.DataFrame], pd.Series]
 Strategy = StrategyFn | str | Path
@@ -53,36 +53,48 @@ def _streamer(strategy: Strategy) -> Callable[[pd.DataFrame, list], np.ndarray]:
     return lambda d, ts: stream_weights(strategy, d, ts)
 
 
+def new_causality_seed() -> int:
+    return int(np.random.default_rng().integers(0, 2**32))
+
+
 def causality_cut_points(
     n_timestamps: int,
     checkpoints: tuple[float, ...] = (0.4, 0.65, 0.85, 0.95, 0.99),
-    n_random: int = 3,
+    n_random: int = 8,
     seed: int = 0,
 ) -> list[int]:
     rng = np.random.default_rng(seed)
     fracs = list(checkpoints) + list(rng.uniform(0.30, 0.995, size=n_random))
-    cuts = sorted({min(n_timestamps - 2, max(10, int(n_timestamps * f))) for f in fracs})
-    return cuts
+    cuts = {min(n_timestamps - 2, max(10, int(n_timestamps * f))) for f in fracs}
+    # The last full bar is always a cut, so no rows except the final one (which earns no return)
+    # escape comparison with a prefix run.
+    cuts.add(n_timestamps - 2)
+    return sorted(cuts)
 
 
 def check_causality_truncation(
     df: pd.DataFrame,
     strategy: Strategy,
     checkpoints: tuple[float, ...] = (0.4, 0.65, 0.85, 0.95, 0.99),
-    n_random_cuts: int = 3,
+    n_random_cuts: int = 8,
     tol: float = 1e-9,
     full_weights: np.ndarray | None = None,
+    seed: int | None = None,
 ) -> tuple[bool, float, str]:
     """
     1. Determinism: two separate runs on the same prefix must give identical weights.
     2. Causality: weights computed on each prefix [0..T_k] must equal the full-run weights at timestamps <= T_k.
     Prefixes run in increasing order and before the full run, each in its own process for file strategies,
     so nothing computed on later data can be reused for earlier rows.
+    Random cuts use a fresh seed per run unless one is given, so a strategy cannot be written around them;
+    the seed is reported so a verdict can be reproduced with --seed.
     """
+    if seed is None:
+        seed = new_causality_seed()
     call = _caller(strategy)
     full_df = df.copy()
     unique_ts = np.sort(full_df["timestamp"].unique())
-    cuts = causality_cut_points(len(unique_ts), checkpoints, n_random_cuts)
+    cuts = causality_cut_points(len(unique_ts), checkpoints, n_random_cuts, seed)
 
     prefix_results = []
     for idx, cut_idx in enumerate(cuts):
@@ -126,10 +138,14 @@ def check_causality_truncation(
             return (
                 False,
                 max_diff,
-                f"Look-ahead leak detected at {t_cut}: max|w_trunc - w_full| = {diff:.3e} > {tol:.1e}",
+                f"Look-ahead leak detected at {t_cut}: max|w_trunc - w_full| = {diff:.3e} > {tol:.1e} (seed={seed})",
             )
 
-    return True, max_diff, f"Causal invariance verified across {len(prefix_results)} prefix cuts (max diff={max_diff:.2e})"
+    return (
+        True,
+        max_diff,
+        f"Causal invariance verified across {len(prefix_results)} prefix cuts (max diff={max_diff:.2e}, seed={seed})",
+    )
 
 
 def purged_oos_split_eval(
@@ -352,6 +368,8 @@ def run_full_audit(
     strategy: Strategy,
     fee_grid_bps: tuple[float, ...] = (0.0, 3.0, 5.0, 10.0),
     holdout_df: pd.DataFrame | None = None,
+    causality_seed: int | None = None,
+    n_random_cuts: int = 8,
 ) -> dict:
     df_clean = enforce_schema(df)
     dq: QualityReport = audit_dataset(df_clean)
@@ -380,7 +398,11 @@ def run_full_audit(
     rows_per_sec = len(df_clean) / max(1e-6, (elapsed_ms / 1000.0))
 
     causal_ok, max_leak_diff, causal_msg = check_causality_truncation(
-        df_clean, strategy, full_weights=weights.to_numpy(dtype=np.float64)
+        df_clean,
+        strategy,
+        n_random_cuts=n_random_cuts,
+        full_weights=weights.to_numpy(dtype=np.float64),
+        seed=causality_seed,
     )
     ic_stats = information_coefficient(df_clean, weights)
 
@@ -461,6 +483,11 @@ def format_audit_report(res: dict, strategy_name: str, provenance: dict | None =
             f"    data sha256 {provenance.get('data_sha256', 'n/a')}"
             + (f" | holdout sha256 {provenance['holdout_sha256']}" if provenance.get("holdout_sha256") else "")
         )
+        if provenance.get("causality_seed") is not None:
+            lines.append(
+                f"    causality seed {provenance['causality_seed']} | random cuts {provenance.get('n_random_cuts', 'n/a')} "
+                f"(reproduce with --seed {provenance['causality_seed']})"
+            )
     lines += [
         f"[1] DATA QUALITY     : DQS={dq.dqs}/100 ({dq.status}) | rows={dq.total_rows} | symbols={dq.n_symbols} | gaps={dq.timestamp_gaps} | funding_irreg={dq.funding_irregularities}",
         f"[2] CAUSALITY CHECK  : {'[PASS]' if c['passed'] else '[FAIL]'} {c['detail']}",
@@ -607,6 +634,8 @@ def main() -> int:
     parser.add_argument("strategy", help="Path to strategy .py file defining compute_weights(df)")
     parser.add_argument("--data", default="data/train_1h.parquet", help="Path to input parquet file")
     parser.add_argument("--holdout", default="", help="Optional path to private holdout parquet file")
+    parser.add_argument("--seed", type=int, default=None, help="Seed for random causality cuts (default: fresh per run)")
+    parser.add_argument("--n-random-cuts", type=int, default=8, help="Number of random causality cuts (default: 8)")
     args = parser.parse_args()
 
     data_path = Path(args.data)
@@ -624,7 +653,8 @@ def main() -> int:
 
     df = pd.read_parquet(data_path)
     holdout_df = pd.read_parquet(holdout_path) if holdout_path is not None else None
-    res = run_full_audit(df, strategy_path, holdout_df=holdout_df)
+    seed = args.seed if args.seed is not None else new_causality_seed()
+    res = run_full_audit(df, strategy_path, holdout_df=holdout_df, causality_seed=seed, n_random_cuts=args.n_random_cuts)
 
     if strategy_path.resolve().name != "baseline_flow.py" and "weights" in res:
         res["baseline_corr"] = baseline_correlation(df, res["weights"])
@@ -637,6 +667,8 @@ def main() -> int:
         "strategy_sha256": _sha256(strategy_path),
         "data_sha256": _sha256(data_path),
         "holdout_sha256": _sha256(holdout_path) if holdout_path is not None else None,
+        "causality_seed": seed,
+        "n_random_cuts": args.n_random_cuts,
     }
     print(format_audit_report(res, strategy_path.name, provenance))
     return 0 if res["passed"] else 1

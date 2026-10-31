@@ -7,7 +7,7 @@ name = "open-quant-sprint"
 version = "0.1.0"
 description = "Cross-sectional alpha validation and look-ahead audit harness"
 license = { text = "MIT" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26,<3",
     "pandas>=2.2,<4",

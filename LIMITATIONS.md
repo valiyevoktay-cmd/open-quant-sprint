@@ -1,0 +1,44 @@
+# Known limits of the audit (v1.1)
+
+The audit is built to catch honest look-ahead mistakes. It is not a security boundary. These gaps are
+known; the official verdict protocol in `RULES.md` is designed around them.
+
+## A strategy is ordinary Python
+
+- Each call runs in a separate process from an empty directory, but the process can still read files
+  and open network connections. A strategy that reads the dataset from disk can see the future.
+- Block [13] of the report flags common patterns (`shift(-k)`, file reads, imports of the harness).
+  It is a regex scan and is easy to evade, so it does not affect the verdict.
+- Mitigation: every strategy is read by the maintainer, and the official forward run uses an
+  environment where the strategy process cannot read data files or the network.
+
+## Causality is tested on a finite set of cuts
+
+- Weights are compared on the last full bar, five fixed prefixes and eight random ones. A leak that
+  is active only on a few hours can miss all random cuts in a single run, so re-running CI can turn a
+  REJECT into a PASS.
+- Mitigation: the official run uses 60 random cuts. The seed is printed so any run can be reproduced.
+- Two canaries in `tests/fixtures/` (`tail_peek.py`, `known_cuts_peek.py`) reproduce the leaks that
+  passed audit v1.0 and must stay rejected.
+
+## CI is not the referee
+
+- A pull request runs the workflow file from its own branch, so a PR that edits `.github/` can change
+  what CI checks. Changes outside `strategies/` and `src/contrib/` need maintainer review
+  (`.github/CODEOWNERS`, enforced through branch protection on `main`).
+- A green CI run is therefore not a verdict; the maintainer's run is.
+
+## Statistics
+
+- PASS means causal, reproducible and positive after costs, not an edge: 7 % of random combinations of
+  standard causal features pass, none with a bootstrap interval above zero.
+- 95 % interval half-widths are about +-1.5 Sharpe points on the training panel, +-6 on the 36-day
+  holdout and +-9 on the 14-day forward period. Final results are not ranked.
+- The holdout (Sep 12 - Oct 18) is public Binance data and could have been studied before the freeze.
+  Only the forward period is sealed.
+- The number of variants a participant tried is not recorded, so the Deflated Sharpe uses an assumed
+  number of trials.
+
+## Reporting a new gap
+
+See "Reporting a hole in the audit" in `RULES.md`.
