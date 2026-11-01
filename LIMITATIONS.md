@@ -1,4 +1,4 @@
-# Known limits of the audit (v1.3)
+# Known limits of the audit (v1.4)
 
 The audit is built to catch honest look-ahead mistakes. It is not a security boundary. These gaps are
 known; the official verdict protocol in `RULES.md` is designed around them.
@@ -14,13 +14,16 @@ known; the official verdict protocol in `RULES.md` is designed around them.
   could read later bars from the evaluator's variables while the leak check still reported no leak.
   Since v1.2 the process is sent one bar at a time and receives the next bar only after it returns
   weights; the canary `tests/fixtures/frame_peek.py` must stay rejected.
-- Mitigation: every strategy is read by the maintainer, and the official holdout and forward runs use
-  `--container`: no network, a read-only filesystem, no data in the image. CI checks this with the probe
-  `tests/fixtures/escape_probe.py` on every push to `main`. Runs without `--container` (CI on pull
-  requests, local runs) have no such isolation.
-- The container is the boundary, not Python: a check inside the interpreter would not see file reads
-  made by native code such as pyarrow. The parent process still holds the whole evaluation period, so
-  the container must not share its process namespace or filesystem.
+- Mitigation: the maintainer reads every strategy file before the official run, and the forward run
+  is done with the network off. That covers a participant who tries to read data or call out, but it
+  is one person reading, not a barrier. A strategy that hides what it does well enough can get past it.
+- With Docker, `--container` is a real barrier: the strategy process has no network, a read-only
+  filesystem and no data in the image. CI checks it with the probe `tests/fixtures/escape_probe.py` on
+  every push to `main`. Runs without it (CI on pull requests, local runs, and the official run if the
+  maintainer has no Docker) get no such isolation, and the report says so.
+- Catching this inside Python does not work: native code such as pyarrow reads files without going
+  through any Python hook. Also, the parent process holds the whole evaluation period, so a container
+  must not share its filesystem or process namespace.
 
 ## Causality is tested on a finite set of cuts
 

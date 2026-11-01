@@ -31,7 +31,7 @@ The baseline is expected to fail: see [Reference strategies](#reference-strategi
 | `src/backtest.py` | Vectorized backtest: fills, fees, funding |
 | `src/sandbox.py` | Runs each strategy call in a separate process, optionally in a Docker container (`--container`) |
 | `src/freeze.py` | Code freeze record: SHA-256 of strategies and harness (`write`, `check`) |
-| `Dockerfile` | Sandbox image for the official runs: harness and pinned dependencies, no data |
+| `Dockerfile` | Optional sandbox image for `--container`: harness and pinned dependencies, no data |
 | `src/features.py` | Shared causal features |
 | `src/contrib/<name>.py` | Activation-PR features, one file per contributor |
 | `src/stats.py` | IC, Deflated Sharpe, bootstrap intervals |

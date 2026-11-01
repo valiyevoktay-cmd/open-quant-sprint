@@ -1,4 +1,4 @@
-# Sprint 01 Rules (v1.4)
+# Sprint 01 Rules (v1.5)
 
 Changes to these rules are listed in `CHANGELOG.md`.
 
@@ -57,26 +57,30 @@ fool it; the rules rely on good faith. Known gaps are listed in [`LIMITATIONS.md
 CI is a convenience for contributors, not the referee. The official verdict on every strategy is the
 maintainer's own run:
 
-- on the files recorded in `benchmarks/freeze.txt` (`python -m src.freeze write`: SHA-256 of every
-  strategy, contrib and harness file, `requirements.lock` and the `Dockerfile`, plus the commit and
-  the image id), published before Nov 22; `python -m src.freeze check` must pass before each run;
-- with the harness at tag `sprint-01-freeze` and the dependency versions in `requirements.lock`;
-- with `--n-random-cuts 60`, so leaks that escape a few random cuts in one CI run are caught;
-- on the holdout and forward periods, bar by bar: the strategy process is sent one bar at a time and
-  gets the next bar only after it has returned weights for the current one;
-- with `--container oqs-sandbox`: every strategy process runs in the image built from the `Dockerfile`
-  (`docker build -t oqs-sandbox .`),
-  with no network, a read-only filesystem and no copy of the data; the strategy file is the only host
-  file it can see. CI checks on every push to `main` that a probe strategy cannot read the data or
-  reach the network from it. The holdout run on Nov 22 uses the same setup as the forward run;
-- with `--log`, which appends one JSON record per run (commit, file hashes, seed, isolation, verdict,
-  Sharpe and interval); the log is published with the report;
-- after the maintainer has read the strategy file.
+- on the files recorded in `benchmarks/freeze.txt`, published before Nov 22. `python -m src.freeze write`
+  hashes (SHA-256) every strategy, contrib and harness file plus `requirements.lock` and notes the
+  commit; `python -m src.freeze check` has to pass before each run;
+- with the harness at tag `sprint-01-freeze` and the versions in `requirements.lock`;
+- with `--n-random-cuts 60`, so a leak that slips past the few random cuts of one CI run still gets caught;
+- bar by bar on the holdout and forward periods: the strategy process gets one bar at a time and sees
+  the next one only after it has returned weights for the current one;
+- after the maintainer has read every strategy file. This read is the actual guard against a strategy
+  that reads data files or opens a connection, because the audit does not stop either (see
+  `LIMITATIONS.md`). It looks for file access, sockets and HTTP clients, `inspect`, `gc`, `importlib`,
+  `exec`/`eval`, and names assembled from strings;
+- with the network off for the forward run: the forward file is downloaded and hashed first, then the
+  machine stays offline until the run is done;
+- with `--log`, which appends one JSON line per run (commit, file hashes, seed, isolation, verdict,
+  Sharpe and interval). The log is published with the report, with the SHA-256 of the forward file;
+- in the Docker sandbox (`--container oqs-sandbox`, built with `docker build -t oqs-sandbox .`) if the
+  maintainer's machine has Docker. Each strategy process then runs with no network, a read-only
+  filesystem and no data, and that is a real barrier instead of a read. It is optional, and the
+  report states which isolation was used.
 
-If a strategy fails in an official run (an error, a timeout, an attempt to read files or the network
-that the sandbox blocks), the report lists it as failed with the error message, and it is not re-run
-with changed code. A run is repeated only if the harness or the machine failed, and the log shows both
-runs.
+If the read finds file or network access in a strategy, it is listed as failed for that reason and is
+not run on the forward period. If a strategy fails in an official run (an error, a timeout), the report
+lists it as failed with the message, and the code is not changed and re-run. A run is repeated only if
+the harness or the machine failed, and the log shows both runs.
 
 ## Holdout and forward period
 

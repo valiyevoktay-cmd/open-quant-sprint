@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.5 (2026-11-01)
+
+Rules and documentation (audit unchanged, version 1.3.0)
+- `RULES.md`: Docker is no longer a condition of the official run. The guard is the maintainer's read
+  of every strategy file, the forward run with the network off, the freeze record and a published run
+  log. A strategy that reads files or opens connections is listed as failed and not run on the forward
+  period. `--container` stays as an optional, stricter setup.
+- `LIMITATIONS.md` says plainly that without Docker the read is the only protection against file and
+  network access, and that it is one person reading.
+
 ## v1.4 (2026-11-01)
 
 Audit (audit version 1.3.0)
