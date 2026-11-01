@@ -1,4 +1,4 @@
-# Known limits of the audit (v1.1)
+# Known limits of the audit (v1.2)
 
 The audit is built to catch honest look-ahead mistakes. It is not a security boundary. These gaps are
 known; the official verdict protocol in `RULES.md` is designed around them.
@@ -9,8 +9,14 @@ known; the official verdict protocol in `RULES.md` is designed around them.
   and open network connections. A strategy that reads the dataset from disk can see the future.
 - Block [13] of the report flags common patterns (`shift(-k)`, file reads, imports of the harness).
   It is a regex scan and is easy to evade, so it does not affect the verdict.
-- Mitigation: every strategy is read by the maintainer, and the official forward run uses an
-  environment where the strategy process cannot read data files or the network.
+- The process can also inspect its own call stack and memory. Up to audit v1.1 the bar-by-bar
+  evaluation sent the whole holdout or forward period to the strategy process at once, so a strategy
+  could read later bars from the evaluator's variables while the leak check still reported no leak.
+  Since v1.2 the process is sent one bar at a time and receives the next bar only after it returns
+  weights; the canary `tests/fixtures/frame_peek.py` must stay rejected.
+- Mitigation: every strategy is read by the maintainer. A forward runner without network access and
+  without the data files is in progress (see `RULES.md`); until it is in place, the reading is the
+  only guard against file and network access.
 
 ## Causality is tested on a finite set of cuts
 

@@ -19,7 +19,7 @@ from src.sandbox import isolated_call, isolated_call_timed, isolated_stream, loa
 from src.schema import enforce_schema
 from src.stats import information_coefficient
 
-AUDIT_VERSION = "1.1.0"
+AUDIT_VERSION = "1.2.0"
 
 StrategyFn = Callable[[pd.DataFrame], pd.Series]
 Strategy = StrategyFn | str | Path

@@ -1,4 +1,4 @@
-# Sprint 01 Rules (v1.2)
+# Sprint 01 Rules (v1.3)
 
 Changes to these rules are listed in `CHANGELOG.md`.
 
@@ -60,8 +60,12 @@ maintainer's own run:
 - on the file whose SHA-256 is recorded in `benchmarks/freeze.txt` at the freeze, published before Nov 22;
 - with the harness at tag `sprint-01-freeze` and the dependency versions in `requirements.lock`;
 - with `--n-random-cuts 60`, so leaks that escape a few random cuts in one CI run are caught;
-- on the forward period, in an environment where the strategy process can read neither data files nor
-  the network, so it sees only the bars passed to it;
+- on the holdout and forward periods, bar by bar: the strategy process is sent one bar at a time and
+  gets the next bar only after it has returned weights for the current one;
+- on the forward period, in a container with no network access and no copy of the repository or the
+  data files. This runner is in progress and will be used first on the holdout run of Nov 22; until it
+  is in place, the maintainer's reading of each strategy file is the only guard against file and
+  network access;
 - after the maintainer has read the strategy file.
 
 ## Holdout and forward period

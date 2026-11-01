@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.3 (2026-11-01)
+
+Audit (`src/sandbox.py`, audit version 1.2.0)
+- Bar-by-bar evaluation of the holdout and forward periods sends the strategy process one bar at a
+  time; the next bar is sent only after the weights for the current one come back. Up to v1.1 the
+  whole period was sent at once, and a strategy could read later bars through the call stack while
+  the leak check reported no leak.
+- New canary `tests/fixtures/frame_peek.py` and a test that bar-by-bar results are unchanged for
+  honest strategies and that the canary is rejected.
+
+Rules and documentation
+- `RULES.md` describes how the official run is isolated and states that the forward runner without
+  network or data access is still in progress; until then the maintainer's reading is the guard.
+- `LIMITATIONS.md` adds the call-stack vector.
+- Pull request template asks for 100-200 words of empirical notes, as in the Issues, and no longer
+  refers to a paper file that does not exist yet.
+
 ## v1.2 (2026-11-01)
 
 Rules and repository (audit unchanged, version 1.1.0)

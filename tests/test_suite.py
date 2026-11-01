@@ -467,3 +467,20 @@ def test_cli_rejects_missing_holdout_path() -> None:
     )
     assert proc.returncode == 2
     assert "holdout file not found" in proc.stderr
+
+
+def test_bar_by_bar_worker_does_not_hold_future_bars(sample_panel: pd.DataFrame) -> None:
+    from src.audit import evaluate_holdout
+
+    ts = np.sort(sample_panel["timestamp"].unique())
+    cut = ts[-25]
+    train = sample_panel.loc[sample_panel["timestamp"] <= cut].reset_index(drop=True)
+    holdout = sample_panel.loc[sample_panel["timestamp"] > cut].reset_index(drop=True)
+
+    honest = evaluate_holdout(train, holdout, Path("strategies/baseline_flow.py"))
+    assert honest["status"] == "ok" and honest["leak_diff"] == 0.0, honest["detail"]
+    in_process = evaluate_holdout(train, holdout, load_strategy_fn("strategies/baseline_flow.py"))
+    assert honest["metrics"].sharpe == in_process["metrics"].sharpe
+
+    res = evaluate_holdout(train, holdout, Path("tests/fixtures/frame_peek.py"))
+    assert res["status"] == "leak", res["detail"]

@@ -14,5 +14,5 @@
 
 ```
 
-## Empirical Notes (for `reports/sprint_01_paper.md`)
-<!-- Optional for Activation PRs, required for final Strategy PRs: 80-120 words on signal decay, turnover sensitivity, and behavior under 5.0 bps taker fees -->
+## Empirical Notes
+<!-- Optional for Activation PRs, required for final Strategy PRs: 100-200 words on signal decay, turnover sensitivity, and behavior under 5.0 bps taker fees -->
