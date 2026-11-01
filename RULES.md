@@ -1,4 +1,4 @@
-# Sprint 01 Rules (v1.1)
+# Sprint 01 Rules (v1.2)
 
 Changes to these rules are listed in `CHANGELOG.md`.
 
@@ -8,10 +8,10 @@ Changes to these rules are listed in `CHANGELOG.md`.
 | --- | --- |
 | Nov 2 | Repository access. Activation PRs (features, infrastructure, tests) can be merged. |
 | Nov 2 - Nov 8 | Strategy PRs may be opened as drafts. They are not merged before Nov 9. |
-| Nov 9 | Official start. Strategy PRs are merged once CI and review pass. |
+| Nov 9 | Official start. Strategy PRs are merged after review once the write-up is in and the causality check passes. Any audit verdict is accepted; a REJECT shows a red CI check and the maintainer merges it by hand. |
 | Nov 21, 23:59 | Code freeze: tag `sprint-01-freeze`, SHA-256 of every strategy file recorded in `benchmarks/freeze.txt`. |
 | Nov 22 | Preliminary report on the holdout period (Sep 12 - Oct 18). |
-| Dec 7 | Final report on the forward period (Nov 22 - Dec 6), computed on the frozen code. Date confirmed with the cohort by email. |
+| Dec 7 | Final report on the forward period (Nov 22 - Dec 6), computed on the frozen code. Proposed date; it moves if the cohort agrees. |
 
 ## Strategy contract
 
@@ -76,7 +76,7 @@ maintainer's own run:
 
 ## Co-authorship of the working paper
 
-Co-authors are contributors with at least one merged PR that passes CI, and a documented contribution
+Co-authors are contributors with at least one merged PR (any audit verdict), and a documented contribution
 (feature, infrastructure, strategy or review). It does not depend on the sign of a Sharpe ratio.
 
 ## License

@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.2 (2026-11-01)
+
+Rules and repository (audit unchanged, version 1.1.0)
+- `benchmarks/LEADERBOARD.md` removed. The sprint is research, not a competition: results are reported per strategy with intervals, never ranked.
+- `RULES.md`: strategy PRs are merged after review with any audit verdict (a REJECT is merged by hand); co-authorship needs a merged PR, not a passing CI check; Dec 7 is a proposed date.
+- CI on pushes to `main` reports the audit of merged strategies without failing the run. Pull requests still show a red check on REJECT.
+
 ## v1.1 (2026-10-31)
 
 Audit (`src/audit.py`, audit version 1.1.0)

@@ -77,6 +77,11 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           done
           if [ -z "$files" ]; then echo "No contributed strategy files to audit." >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            # Merged strategies may carry any verdict; on main the audit is a report, not a gate.
+            echo "Push to main: audit results are informational and do not fail the run." >> "$GITHUB_STEP_SUMMARY"
+            status=0
+          fi
           exit $status
 
       - name: Reference audit of baseline_flow.py (informational)
