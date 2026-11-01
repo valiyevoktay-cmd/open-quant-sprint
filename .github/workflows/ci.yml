@@ -93,3 +93,33 @@ jobs:
           cat audit_report.txt
           cat audit_report.txt >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  container:
+    name: Strategy sandbox isolation (Docker)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          pip install -e . --no-deps
+
+      - name: Build the sandbox image
+        run: docker build -t oqs-sandbox .
+
+      - name: Strategy process in the container cannot read data or reach the network
+        env:
+          OQS_CONTAINER_IMAGE: oqs-sandbox
+        run: python -m pytest -v tests -k "isolation or bar_by_bar"

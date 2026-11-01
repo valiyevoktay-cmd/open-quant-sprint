@@ -21,6 +21,8 @@ from src.backtest import coerce_weights
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CALL_TIMEOUT_SEC = 300
 STREAM_TIMEOUT_SEC = 3600
+# When set (audit --container), each strategy process runs in this Docker image instead of on the host.
+CONTAINER_ENV = "OQS_CONTAINER_IMAGE"
 
 
 class StrategyError(RuntimeError):
@@ -60,13 +62,28 @@ def stream_weights(fn: Callable[[pd.DataFrame], pd.Series], df: pd.DataFrame, ti
     return np.concatenate(out) if out else np.zeros(0, dtype=np.float64)
 
 
+def _worker_cmd(strategy_path: Path, timeout: int, *extra: str) -> list[str]:
+    image = os.environ.get(CONTAINER_ENV)
+    if not image:
+        return [sys.executable, "-m", "src.sandbox", str(strategy_path), *extra]
+    # No network, read-only filesystem, no capabilities; the only host file it can see is the strategy.
+    # The image holds src/ and the pinned dependencies, never the data. The inner timeout stops the
+    # container itself, which killing the docker client would not.
+    return [
+        "docker", "run", "-i", "--rm", "--network", "none", "--read-only", "--tmpfs", "/tmp",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "64",
+        "-v", f"{strategy_path}:/work/strategy.py:ro", image,
+        "timeout", str(timeout), "python", "-m", "src.sandbox", "/work/strategy.py", *extra,
+    ]
+
+
 def _run_worker(strategy_path: Path, request: dict, timeout: int) -> tuple[np.ndarray, float]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     with tempfile.TemporaryDirectory(prefix="oqs_run_") as workdir:
         try:
             proc = subprocess.run(
-                [sys.executable, "-m", "src.sandbox", str(strategy_path)],
+                _worker_cmd(strategy_path, timeout),
                 input=pickle.dumps(request, protocol=pickle.HIGHEST_PROTOCOL),
                 capture_output=True,
                 cwd=workdir,
@@ -85,6 +102,8 @@ def _run_worker(strategy_path: Path, request: dict, timeout: int) -> tuple[np.nd
         return arr, float(elapsed)
     if payload[:2] == b"ER":
         raise StrategyError(payload[2:].decode("utf-8", errors="replace"))
+    if proc.returncode == 124:  # the container's own timeout
+        raise StrategyError(f"Strategy timed out after {timeout}s")
     tail = proc.stderr.decode("utf-8", errors="replace").strip().splitlines()[-5:]
     raise StrategyError(f"Strategy process exited with code {proc.returncode}: {' | '.join(tail)}")
 
@@ -133,7 +152,7 @@ def isolated_stream(strategy_path: str | Path, df: pd.DataFrame, timestamps) -> 
     out = []
     with tempfile.TemporaryDirectory(prefix="oqs_run_") as workdir, tempfile.TemporaryFile() as err:
         proc = subprocess.Popen(
-            [sys.executable, "-m", "src.sandbox", str(Path(strategy_path).resolve()), "--stream"],
+            _worker_cmd(Path(strategy_path).resolve(), STREAM_TIMEOUT_SEC, "--stream"),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=err,
@@ -164,6 +183,8 @@ def isolated_stream(strategy_path: str | Path, df: pd.DataFrame, timestamps) -> 
                 if not timer.is_alive():
                     raise StrategyError(f"Strategy timed out after {STREAM_TIMEOUT_SEC}s")
                 proc.wait(timeout=30)
+                if proc.returncode == 124:  # the container's own timeout
+                    raise StrategyError(f"Strategy timed out after {STREAM_TIMEOUT_SEC}s")
                 err.seek(0)
                 tail = err.read().decode("utf-8", errors="replace").strip().splitlines()[-5:]
                 raise StrategyError(f"Strategy process exited with code {proc.returncode}: {' | '.join(tail)}")

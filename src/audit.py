@@ -4,7 +4,10 @@ import argparse
 import hashlib
 from pathlib import Path
 import io
+import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -15,11 +18,11 @@ import pandas as pd
 
 from src.backtest import BacktestMetrics, coerce_weights, run_backtest, tiered_fee_bps
 from src.quality import QualityReport, audit_dataset
-from src.sandbox import isolated_call, isolated_call_timed, isolated_stream, load_module_fn, stream_weights
+from src.sandbox import CONTAINER_ENV, isolated_call, isolated_call_timed, isolated_stream, load_module_fn, stream_weights
 from src.schema import enforce_schema
 from src.stats import information_coefficient
 
-AUDIT_VERSION = "1.2.0"
+AUDIT_VERSION = "1.3.0"
 
 StrategyFn = Callable[[pd.DataFrame], pd.Series]
 Strategy = StrategyFn | str | Path
@@ -488,6 +491,8 @@ def format_audit_report(res: dict, strategy_name: str, provenance: dict | None =
                 f"    causality seed {provenance['causality_seed']} | random cuts {provenance.get('n_random_cuts', 'n/a')} "
                 f"(reproduce with --seed {provenance['causality_seed']})"
             )
+        if provenance.get("isolation"):
+            lines.append(f"    strategy process: {provenance['isolation']}")
     lines += [
         f"[1] DATA QUALITY     : DQS={dq.dqs}/100 ({dq.status}) | rows={dq.total_rows} | symbols={dq.n_symbols} | gaps={dq.timestamp_gaps} | funding_irreg={dq.funding_irregularities}",
         f"[2] CAUSALITY CHECK  : {'[PASS]' if c['passed'] else '[FAIL]'} {c['detail']}",
@@ -629,6 +634,25 @@ def baseline_correlation(df: pd.DataFrame, weights: pd.Series) -> float | None:
     return round(float(np.corrcoef(r_base, r_strat)[0, 1]), 2)
 
 
+def run_record(res: dict, provenance: dict, strategy_name: str) -> dict:
+    """One JSON line per run for the official log: what was run, on what, and what came out."""
+    def sharpe(m: BacktestMetrics | None) -> list[float] | None:
+        return None if m is None else [round(float(x), 4) for x in (m.sharpe, m.sharpe_ci_low, m.sharpe_ci_high)]
+
+    h_eval = res.get("holdout_eval") or {}
+    return {
+        "utc": pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds"),
+        "strategy": strategy_name,
+        **provenance,
+        "verdict": "PASS" if res["passed"] else "REJECT",
+        "causality": {"passed": bool(res["causality"]["passed"]), "detail": res["causality"]["detail"]},
+        "sharpe_5bps": sharpe(res.get("fee_curve", {}).get(5.0)),
+        "holdout_status": h_eval.get("status"),
+        "holdout_detail": h_eval.get("detail"),
+        "holdout_sharpe": sharpe(res.get("holdout")),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Syndicate look-ahead and cost-drag audit on a strategy file.")
     parser.add_argument("strategy", help="Path to strategy .py file defining compute_weights(df)")
@@ -636,7 +660,16 @@ def main() -> int:
     parser.add_argument("--holdout", default="", help="Optional path to private holdout parquet file")
     parser.add_argument("--seed", type=int, default=None, help="Seed for random causality cuts (default: fresh per run)")
     parser.add_argument("--n-random-cuts", type=int, default=8, help="Number of random causality cuts (default: 8)")
+    parser.add_argument("--container", default="", help="Docker image for the strategy process (no network, no data files)")
+    parser.add_argument("--log", default="", help="Append a JSON record of this run to this file")
     args = parser.parse_args()
+    if args.container:
+        # A missing image must stop the run here, not show up as a crashed strategy.
+        probe = subprocess.run(["docker", "image", "inspect", args.container], capture_output=True) if shutil.which("docker") else None
+        if probe is None or probe.returncode != 0:
+            print(f"Error: Docker image {args.container} not available. Build it with `docker build -t {args.container} .`", file=sys.stderr)
+            return 2
+        os.environ[CONTAINER_ENV] = args.container
 
     data_path = Path(args.data)
     if not data_path.exists():
@@ -669,8 +702,12 @@ def main() -> int:
         "holdout_sha256": _sha256(holdout_path) if holdout_path is not None else None,
         "causality_seed": seed,
         "n_random_cuts": args.n_random_cuts,
+        "isolation": f"container {args.container}" if args.container else "host process",
     }
     print(format_audit_report(res, strategy_path.name, provenance))
+    if args.log:
+        with open(args.log, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(run_record(res, provenance, strategy_path.name)) + "\n")
     return 0 if res["passed"] else 1
 
 

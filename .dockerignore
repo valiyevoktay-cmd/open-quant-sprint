@@ -1,0 +1,5 @@
+# Only the harness and the lock file go into the image; data and private folders stay out.
+*
+!src/
+!requirements.lock
+**/__pycache__

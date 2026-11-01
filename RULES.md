@@ -1,4 +1,4 @@
-# Sprint 01 Rules (v1.3)
+# Sprint 01 Rules (v1.4)
 
 Changes to these rules are listed in `CHANGELOG.md`.
 
@@ -57,16 +57,26 @@ fool it; the rules rely on good faith. Known gaps are listed in [`LIMITATIONS.md
 CI is a convenience for contributors, not the referee. The official verdict on every strategy is the
 maintainer's own run:
 
-- on the file whose SHA-256 is recorded in `benchmarks/freeze.txt` at the freeze, published before Nov 22;
+- on the files recorded in `benchmarks/freeze.txt` (`python -m src.freeze write`: SHA-256 of every
+  strategy, contrib and harness file, `requirements.lock` and the `Dockerfile`, plus the commit and
+  the image id), published before Nov 22; `python -m src.freeze check` must pass before each run;
 - with the harness at tag `sprint-01-freeze` and the dependency versions in `requirements.lock`;
 - with `--n-random-cuts 60`, so leaks that escape a few random cuts in one CI run are caught;
 - on the holdout and forward periods, bar by bar: the strategy process is sent one bar at a time and
   gets the next bar only after it has returned weights for the current one;
-- on the forward period, in a container with no network access and no copy of the repository or the
-  data files. This runner is in progress and will be used first on the holdout run of Nov 22; until it
-  is in place, the maintainer's reading of each strategy file is the only guard against file and
-  network access;
+- with `--container oqs-sandbox`: every strategy process runs in the image built from the `Dockerfile`
+  (`docker build -t oqs-sandbox .`),
+  with no network, a read-only filesystem and no copy of the data; the strategy file is the only host
+  file it can see. CI checks on every push to `main` that a probe strategy cannot read the data or
+  reach the network from it. The holdout run on Nov 22 uses the same setup as the forward run;
+- with `--log`, which appends one JSON record per run (commit, file hashes, seed, isolation, verdict,
+  Sharpe and interval); the log is published with the report;
 - after the maintainer has read the strategy file.
+
+If a strategy fails in an official run (an error, a timeout, an attempt to read files or the network
+that the sandbox blocks), the report lists it as failed with the error message, and it is not re-run
+with changed code. A run is repeated only if the harness or the machine failed, and the log shows both
+runs.
 
 ## Holdout and forward period
 

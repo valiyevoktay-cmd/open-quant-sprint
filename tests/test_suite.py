@@ -484,3 +484,41 @@ def test_bar_by_bar_worker_does_not_hold_future_bars(sample_panel: pd.DataFrame)
 
     res = evaluate_holdout(train, holdout, Path("tests/fixtures/frame_peek.py"))
     assert res["status"] == "leak", res["detail"]
+
+
+def test_isolation_escape_probe(sample_panel: pd.DataFrame) -> None:
+    import os
+
+    from src.sandbox import CONTAINER_ENV, StrategyError, isolated_call
+    probe = "tests/fixtures/escape_probe.py"
+    if not os.environ.get(CONTAINER_ENV):
+        # On the host the strategy process can read the repository's data; this is why the official
+        # holdout and forward runs use --container.
+        with pytest.raises(StrategyError, match="escaped: file"):
+            isolated_call(probe, sample_panel)
+    else:
+        assert not isolated_call(probe, sample_panel).any()
+
+
+def test_run_record_is_one_json_line(sample_panel: pd.DataFrame) -> None:
+    import json
+
+    from src.audit import run_record
+    res = run_full_audit(sample_panel, load_strategy_fn("strategies/baseline_flow.py"), causality_seed=7)
+    rec = json.loads(json.dumps(run_record(res, {"strategy_sha256": "abc", "causality_seed": 7}, "baseline_flow.py")))
+    assert rec["verdict"] in {"PASS", "REJECT"} and rec["causality_seed"] == 7 and rec["strategy_sha256"] == "abc"
+    assert len(rec["sharpe_5bps"]) == 3 and rec["holdout_status"] is None
+
+
+def test_freeze_record_detects_changed_new_and_missing_files(tmp_path: Path) -> None:
+    from src.freeze import check, write
+    for f, text in {"strategies/a.py": "x = 1\n", "src/m.py": "y = 2\n", "requirements.lock": "numpy==1\n"}.items():
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f).write_text(text)
+    freeze = tmp_path / "benchmarks" / "freeze.txt"
+    write(tmp_path, freeze)
+    assert check(tmp_path, freeze) == []
+    (tmp_path / "strategies/a.py").write_text("x = 2\n")
+    (tmp_path / "strategies/b.py").write_text("z = 3\n")
+    (tmp_path / "src/m.py").unlink()
+    assert sorted(check(tmp_path, freeze)) == ["changed: strategies/a.py", "missing: src/m.py", "not in freeze: strategies/b.py"]

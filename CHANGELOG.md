@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.4 (2026-11-01)
+
+Audit (audit version 1.3.0)
+- `--container IMAGE` runs every strategy process in Docker with no network, a read-only filesystem,
+  no capabilities and only the strategy file mounted. `Dockerfile` and `.dockerignore` build the image
+  from `src/` and `requirements.lock`, without data.
+- `--log FILE` appends a JSON record of the run (commit, hashes, seed, isolation, verdict, Sharpe).
+  The report prints how the strategy process was isolated.
+- `python -m src.freeze write|check` records and verifies SHA-256 of strategies, contrib and harness
+  files, the lock file and the Dockerfile in `benchmarks/freeze.txt`.
+- CI job "Strategy sandbox isolation (Docker)" on pushes to `main` builds the image and checks that
+  the probe `tests/fixtures/escape_probe.py` can read neither the data nor the network from it.
+
+Rules
+- `RULES.md`: the official runs use the freeze record, the container and the run log; what happens
+  when a strategy fails in an official run.
+
 ## v1.3 (2026-11-01)
 
 Audit (`src/sandbox.py`, audit version 1.2.0)
