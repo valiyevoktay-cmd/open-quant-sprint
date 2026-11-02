@@ -12,6 +12,8 @@ Rules and documentation
 - `RULES.md` lists the commands for the Nov 22 and Dec 7 runs, including how to build the panel that
   leads into the forward period.
 - README quick start: a virtual environment, realistic timings, and how to open a PR from a fork.
+- `CODEOWNERS`: strategies and contrib files now need the maintainer's approval too. Before, a PR that
+  touched only those files could be approved by any collaborator, including another participant.
 
 ## v1.5 (2026-11-01)
 

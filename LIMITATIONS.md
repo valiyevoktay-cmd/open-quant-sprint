@@ -37,8 +37,8 @@ known; the official verdict protocol in `RULES.md` is designed around them.
 ## CI is not the referee
 
 - A pull request runs the workflow file from its own branch, so a PR that edits `.github/` can change
-  what CI checks. Changes outside `strategies/` and `src/contrib/` need maintainer review
-  (`.github/CODEOWNERS`, enforced through branch protection on `main`).
+  what CI checks. Every change to `main` needs the maintainer's approval (`.github/CODEOWNERS`,
+  enforced through branch protection on `main`), so participants cannot approve each other's PRs.
 - A green CI run is therefore not a verdict; the maintainer's run is.
 
 ## Statistics

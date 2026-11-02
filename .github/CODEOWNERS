@@ -1,9 +1,3 @@
-# Everything requires Lead Maintainer sign-off except contributed strategies and contrib features.
-# Enforced only while branch protection on main requires code owner review. Later lines win.
+# Every change to main, strategies and contrib files included, needs the Lead Maintainer's approval.
+# Enforced while branch protection on main requires code owner review.
 * @valiyevoktay-cmd
-/strategies/*.py
-/src/contrib/*.py
-/strategies/baseline_flow.py @valiyevoktay-cmd
-/strategies/template.py @valiyevoktay-cmd
-/strategies/leaky_example.py @valiyevoktay-cmd
-/src/contrib/__init__.py @valiyevoktay-cmd
