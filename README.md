@@ -8,15 +8,17 @@ The audit catches common look-ahead mistakes; it is not secure against deliberat
 
 ## Quick start
 
-Requires Python 3.11+.
+Requires Python 3.11+. The lock file pins exact versions, so use a fresh virtual environment rather
+than your global Python.
 
 ```bash
 git clone https://github.com/valiyevoktay-cmd/open-quant-sprint
 cd open-quant-sprint
-pip install -r requirements.lock                  # exact versions used by CI
+python -m venv .venv                              # then .venv\Scripts\activate on Windows, source .venv/bin/activate elsewhere
+pip install -r requirements.lock                  # exact versions used by CI, about 2 min
 pip install -e . --no-deps
-python -m pytest -q                               # expected: 24 passed, about 90 s
-python -m src.audit strategies/baseline_flow.py   # expected: FINAL VERDICT: [REJECT]
+python -m pytest -q                               # expected: all tests pass, about 2 min
+python -m src.audit strategies/baseline_flow.py   # expected: FINAL VERDICT: [REJECT], about 1 min
 ```
 
 The baseline is expected to fail: see [Reference strategies](#reference-strategies).
@@ -75,6 +77,10 @@ git checkout -b feat/<name>
 python -m src.audit strategies/<name>.py
 git push origin feat/<name>     # open a PR; strategy PRs stay draft until Nov 9
 ```
+
+Without write access to this repository, fork it on GitHub and push the branch to your fork instead
+(`git remote add fork https://github.com/<you>/open-quant-sprint`, then `git push fork feat/<name>`),
+and open the PR from there. The first CI run on a PR from a fork waits until the maintainer approves it.
 
 CI runs the test suite and audits every strategy file added, changed or renamed in the PR. Only your files under `strategies/` and `src/contrib/` are taken from the PR; everything else comes from `main`. CI is a convenience: the official verdict is the maintainer's run described in `RULES.md`.
 

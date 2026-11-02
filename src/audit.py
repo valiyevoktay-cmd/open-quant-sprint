@@ -22,7 +22,7 @@ from src.sandbox import CONTAINER_ENV, isolated_call, isolated_call_timed, isola
 from src.schema import enforce_schema
 from src.stats import information_coefficient
 
-AUDIT_VERSION = "1.3.0"
+AUDIT_VERSION = "1.3.1"
 
 StrategyFn = Callable[[pd.DataFrame], pd.Series]
 Strategy = StrategyFn | str | Path
@@ -322,6 +322,18 @@ def audit_wick_vulnerability(
         "total_wick_bars": int(np.sum(is_wick_bar)),
         "passed": passed,
     }
+
+
+def holdout_start_problem(panel: pd.DataFrame, holdout: pd.DataFrame) -> str | None:
+    """
+    The holdout or forward file has to start one hour after the panel ends. With a gap, rolling
+    features at the start of the period would quietly run on stale bars; with an overlap, the keys clash.
+    """
+    expected = panel["timestamp"].max() + pd.Timedelta(hours=1)
+    start = holdout["timestamp"].min()
+    if start == expected:
+        return None
+    return f"holdout starts at {start}, expected {expected}, one hour after the --data panel ends"
 
 
 def evaluate_holdout(
@@ -686,6 +698,10 @@ def main() -> int:
 
     df = pd.read_parquet(data_path)
     holdout_df = pd.read_parquet(holdout_path) if holdout_path is not None else None
+    if holdout_df is not None and (problem := holdout_start_problem(df, holdout_df)):
+        # A data problem stops the run; it must not show up as a verdict on the strategy.
+        print(f"Error: {problem}.", file=sys.stderr)
+        return 2
     seed = args.seed if args.seed is not None else new_causality_seed()
     res = run_full_audit(df, strategy_path, holdout_df=holdout_df, causality_seed=seed, n_random_cuts=args.n_random_cuts)
 

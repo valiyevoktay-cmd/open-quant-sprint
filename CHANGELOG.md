@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.6 (2026-11-02)
+
+Audit (audit version 1.3.1)
+- The CLI stops with an error when the `--holdout` file does not start one hour after the `--data`
+  panel ends. Before, a gap went through silently: rolling features at the start of the period ran on
+  stale bars, and the report still said "bar-by-bar evaluation". An overlap now stops the run too,
+  instead of being reported as a failed strategy.
+
+Rules and documentation
+- `RULES.md` lists the commands for the Nov 22 and Dec 7 runs, including how to build the panel that
+  leads into the forward period.
+- README quick start: a virtual environment, realistic timings, and how to open a PR from a fork.
+
 ## v1.5 (2026-11-01)
 
 Rules and documentation (audit unchanged, version 1.3.0)

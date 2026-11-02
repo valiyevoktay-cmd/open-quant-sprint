@@ -522,3 +522,28 @@ def test_freeze_record_detects_changed_new_and_missing_files(tmp_path: Path) -> 
     (tmp_path / "strategies/b.py").write_text("z = 3\n")
     (tmp_path / "src/m.py").unlink()
     assert sorted(check(tmp_path, freeze)) == ["changed: strategies/a.py", "missing: src/m.py", "not in freeze: strategies/b.py"]
+
+
+def test_cli_stops_when_holdout_does_not_follow_the_panel(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    from src.audit import holdout_start_problem
+
+    full = pd.read_parquet("data/train_1h.parquet")
+    ts = np.sort(full["timestamp"].unique())
+    panel = full[(full["timestamp"] > ts[-400]) & (full["timestamp"] <= ts[-200])]
+    next_bars = full[(full["timestamp"] > ts[-200]) & (full["timestamp"] <= ts[-150])]
+    after_gap = full[full["timestamp"] > ts[-100]]
+    assert holdout_start_problem(panel, next_bars) is None
+    panel.to_parquet(tmp_path / "panel.parquet")
+    after_gap.to_parquet(tmp_path / "gap.parquet")
+    proc = subprocess.run(
+        [sys.executable, "-m", "src.audit", "strategies/baseline_flow.py",
+         "--data", str(tmp_path / "panel.parquet"), "--holdout", str(tmp_path / "gap.parquet")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 2, proc.stdout[-500:]
+    assert "one hour after" in proc.stderr

@@ -1,4 +1,4 @@
-# Sprint 01 Rules (v1.5)
+# Sprint 01 Rules (v1.6)
 
 Changes to these rules are listed in `CHANGELOG.md`.
 
@@ -81,6 +81,32 @@ If the read finds file or network access in a strategy, it is listed as failed f
 not run on the forward period. If a strategy fails in an official run (an error, a timeout), the report
 lists it as failed with the message, and the code is not changed and re-run. A run is repeated only if
 the harness or the machine failed, and the log shows both runs.
+
+### The two official runs, step by step
+
+The audit takes a panel (`--data`) and the period that follows it (`--holdout`), and stops with an
+error if the period does not start exactly one hour after the panel ends.
+
+Nov 22, holdout: `--data data/train_1h.parquet --holdout data/holdout_1h.parquet`. The two files are
+contiguous already.
+
+Dec 7, forward:
+
+1. After 00:00 UTC on Dec 7, build the panel up to the start of the period, and the period itself.
+   The builder drops bars that have not closed yet.
+   ```
+   python -m data.build_dataset --start 2025-01-01T00:00 --end 2026-11-22T00:00 --holdout-frac 0 --out-dir data/forward/panel
+   python -m data.build_dataset --start 2026-11-22T00:00 --end 2026-12-07T00:00 --holdout-frac 0 --out-dir data/forward/period
+   ```
+   The period file has to end at 23:00 on Dec 6 and pass the data quality check. Record its SHA-256.
+2. Switch the network off and run `python -m src.freeze check`.
+3. For each strategy, once its file has been read:
+   ```
+   python -m src.audit strategies/<name>.py --data data/forward/panel/panel_1h.parquet --holdout data/forward/period/panel_1h.parquet --n-random-cuts 60 --log data/forward/log.jsonl
+   ```
+   The causality and cost checks then run on the longer panel (Jan 2025 - Nov 21, 2026). The forward
+   result is the `Holdout` line of the report.
+4. Publish the reports, `log.jsonl` and the hashes.
 
 ## Holdout and forward period
 
