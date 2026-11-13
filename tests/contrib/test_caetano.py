@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from numpy.lib.stride_tricks import sliding_window_view
 
 from src.contrib.caetano import rolling_zscore, rolling_zscore_slow
 
@@ -25,6 +26,38 @@ def _with_log_returns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _sliding_window_reference(
+    df: pd.DataFrame, col: str, window: int
+) -> np.ndarray:
+    """Build per-symbol z-scores with explicit window means and sample stds."""
+    values = pd.to_numeric(df[col], errors="raise").to_numpy(dtype=np.float64)
+    result = np.full(len(df), np.nan, dtype=np.float64)
+
+    for positions in df.groupby("symbol", sort=False).indices.values():
+        symbol_values = values[positions]
+        if symbol_values.size < window:
+            continue
+
+        windows = sliding_window_view(symbol_values, window_shape=window)
+        finite = np.isfinite(windows).all(axis=1)
+        valid_windows = windows[finite]
+        if valid_windows.size == 0:
+            continue
+
+        means = valid_windows.mean(axis=1)
+        stds = valid_windows.std(axis=1, ddof=1)
+        scores = np.zeros(stds.shape, dtype=np.float64)
+        np.divide(
+            valid_windows[:, -1] - means,
+            stds,
+            out=scores,
+            where=stds > 0.0,
+        )
+        result[positions[np.flatnonzero(finite) + window - 1]] = scores
+
+    return result
+
+
 def test_rolling_zscore_matches_slow_reference_on_real_log_returns(train: pd.DataFrame) -> None:
     df = _with_log_returns(train)
 
@@ -33,6 +66,18 @@ def test_rolling_zscore_matches_slow_reference_on_real_log_returns(train: pd.Dat
 
     np.testing.assert_array_equal(np.isnan(fast), np.isnan(slow))
     np.testing.assert_allclose(fast, slow, rtol=0.0, atol=1e-9, equal_nan=True)
+
+
+def test_rolling_zscore_matches_sliding_window_ddof1_on_real_log_returns(
+    train: pd.DataFrame,
+) -> None:
+    df = _with_log_returns(train)
+
+    actual = rolling_zscore(df, "log_return", window=48).to_numpy()
+    reference = _sliding_window_reference(df, "log_return", window=48)
+
+    np.testing.assert_array_equal(np.isnan(actual), np.isnan(reference))
+    np.testing.assert_allclose(actual, reference, rtol=0.0, atol=1e-9, equal_nan=True)
 
 
 def test_rolling_zscore_raw_btc_close_against_slow_reference(train: pd.DataFrame) -> None:
