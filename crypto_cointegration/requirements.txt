@@ -1,7 +1,6 @@
 numpy
 pandas
 scipy
-statsmodels
 matplotlib
 pyarrow
 pytest

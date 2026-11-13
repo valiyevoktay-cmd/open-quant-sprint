@@ -1,8 +1,8 @@
 import numpy as np
-from statsmodels.tsa.stattools import adfuller
+from src.stats import adf_first_order
 
 
-def engle_granger(y, x, maxlag: int = 1):
+def engle_granger(y, x):
     """Two-step Engle-Granger test; returns residual ADF statistic and OLS beta.
 
     The residual ADF regression has no deterministic term and uses a fixed lag.
@@ -15,15 +15,13 @@ def engle_granger(y, x, maxlag: int = 1):
 
     valid = np.isfinite(y) & np.isfinite(x)
     y, x = y[valid], x[valid]
-    if y.size <= maxlag + 3:
-        raise ValueError("Insufficient valid observations for the requested ADF lag.")
+    if y.size < 25:
+        raise ValueError("At least 25 valid observations are required.")
 
     design = np.column_stack((np.ones(y.size), x))
     alpha, beta = np.linalg.lstsq(design, y, rcond=None)[0]
     residuals = y - (alpha + beta * x)
-    statistic = adfuller(
-        residuals, maxlag=maxlag, regression="n", autolag=None
-    )[0]
+    statistic,_ = adf_first_order(residuals)
     return float(statistic), float(beta)
 
 
@@ -51,7 +49,7 @@ def kalman_hedge_ratio(
     covariance = np.eye(2) * initial_covariance
     process_cov = np.eye(2) * delta
     identity = np.eye(2)
-    beta = np.empty(n)
+    beta = np.full(n,np.nan)
 
     for t in range(n):
         covariance += process_cov

@@ -7,7 +7,7 @@ name = "crypto-cointegration"
 version = "0.1.0"
 description = "Rolling cryptocurrency cointegration and hedge-ratio analysis"
 requires-python = ">=3.10"
-dependencies = ["numpy", "pandas", "statsmodels", "matplotlib", "pyarrow"]
+dependencies = ["numpy", "pandas","matplotlib", "pyarrow"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
