@@ -308,3 +308,174 @@ def test_engle_granger_size_under_the_null(capsys):
     with capsys.disabled():
         print(f"\n[darsh] null rejection rate at {EG_CRIT_5PCT}: {rate:.3f} (200 pairs)")
     assert 0.02 <= rate <= 0.09
+
+
+# ---------------------------------------------------------------------------
+# Section 3. Comparison with src/contrib/jatin.py (PR #23).
+#
+# Black-box only: these tests call Jatin's two functions and never depend on
+# how they are written. What the comparison found:
+#
+# * engle_granger: same t-stat (exactly, after the 4-decimal rounding in
+#   adf_first_order) and the same beta to 1e-14, on synthetic data and on all
+#   380 ordered pairs of the real panel.
+# * kalman_hedge_ratio: two differences, both in the prior, both explained.
+#   (a) his prior variance is 1e4 (``initial_covariance``), mine is 1.0;
+#   (b) he adds ``delta`` once before the first update, I do not.
+#   With ``init_var = 1e4 + delta`` my filter reproduces his to 1e-12.
+#   With each side's defaults the betas differ a lot in the first hours and by
+#   less than 5e-3 after hour 2,000.
+# * No look-ahead in his filter: output is bit-identical when later rows are
+#   dropped or changed.
+# ---------------------------------------------------------------------------
+
+from pathlib import Path  # noqa: E402
+
+try:
+    from src.contrib import jatin
+except ImportError:  # the comparison needs PR #23 in the checkout
+    jatin = None
+
+needs_jatin = pytest.mark.skipif(jatin is None, reason="src/contrib/jatin.py is not in this checkout")
+
+TRAIN = Path("data/train_1h.parquet")
+JATIN_INIT_VAR = 1e4  # default of his ``initial_covariance``
+BURN_IN = 2_000
+
+
+def matched_prior(y, x, delta: float = 1e-5, obs_var: float = 1e-3) -> np.ndarray:
+    """My filter with Jatin's prior: variance 1e4, plus one ``delta`` before the first update."""
+    return kalman_hedge_ratio(y, x, delta, obs_var, init_var=JATIN_INIT_VAR + delta)
+
+
+@pytest.fixture(scope="module")
+def log_close():
+    if not TRAIN.exists():
+        pytest.skip(f"{TRAIN} not found")
+    pd = pytest.importorskip("pandas")
+    df = pd.read_parquet(TRAIN, columns=["timestamp", "symbol", "close"])
+    wide = df.pivot(index="timestamp", columns="symbol", values="close").sort_index()
+    return {symbol: np.log(wide[symbol].to_numpy(dtype=np.float64)) for symbol in wide.columns}
+
+
+@needs_jatin
+def test_compare_engle_granger_on_synthetic_pairs():
+    rng = np.random.default_rng(0)
+    pairs = [planted_pair(seed) for seed in range(20)] + [random_walk_pair(rng) for _ in range(200)]
+    for y, x in pairs:
+        t_his, beta_his = jatin.engle_granger(y, x)
+        t_mine, beta_mine = engle_granger(y, x)
+        assert t_his == t_mine
+        assert beta_his == pytest.approx(beta_mine, abs=1e-12)
+
+
+@needs_jatin
+def test_compare_engle_granger_on_the_real_panel(log_close, capsys):
+    symbols = sorted(log_close)
+    n = len(log_close[symbols[0]])
+    cut1, cut2 = int(n * 0.4), int(n * 0.7)
+    windows = {"full": (0, n), "first 40%": (0, cut1), "next 30%": (cut1, cut2), "last 30%": (cut2, n)}
+
+    lines = []
+    for name, (lo, hi) in windows.items():
+        worst_beta, passes = 0.0, 0
+        for sy in symbols:
+            for sx in symbols:
+                if sy == sx:
+                    continue
+                y, x = log_close[sy][lo:hi], log_close[sx][lo:hi]
+                t_his, beta_his = jatin.engle_granger(y, x)
+                t_mine, beta_mine = engle_granger(y, x)
+                assert t_his == t_mine, (name, sy, sx)
+                worst_beta = max(worst_beta, abs(beta_his - beta_mine))
+                passes += t_mine < EG_CRIT_5PCT
+        assert worst_beta < 1e-12
+        lines.append(f"{name}: {passes}/380 ordered pairs below {EG_CRIT_5PCT}, max |beta diff| {worst_beta:.1e}")
+    with capsys.disabled():
+        print("\n[darsh vs jatin] engle_granger, real panel, identical t-stats\n  " + "\n  ".join(lines))
+
+
+@needs_jatin
+@pytest.mark.parametrize("delta, obs_var", [(1e-5, 1e-3), (1e-4, 1e-2)])
+def test_compare_kalman_with_matched_prior_on_synthetic(delta, obs_var):
+    cases = [
+        make_pair(seed=0, beta=1.5),
+        make_pair(seed=0, beta=jump_beta()),
+        make_pair(seed=0, beta=jump_beta(), level=11.0),
+    ]
+    for y, x in cases:
+        his = jatin.kalman_hedge_ratio(y, x, delta, obs_var)
+        np.testing.assert_allclose(matched_prior(y, x, delta, obs_var), his, rtol=0.0, atol=1e-10)
+        # He centers x inside as well: passing x - x[0] changes nothing.
+        np.testing.assert_array_equal(jatin.kalman_hedge_ratio(y, x - x[0], delta, obs_var), his)
+
+
+@needs_jatin
+def test_compare_kalman_on_the_real_panel(log_close, capsys):
+    """19 pairs against BTC here; all 190 pairs give the same picture (figures in the PR)."""
+    x = log_close["BTCUSDT"]
+    matched, late, early = 0.0, 0.0, 0.0
+    for symbol in sorted(log_close):
+        if symbol == "BTCUSDT":
+            continue
+        y = log_close[symbol]
+        his = jatin.kalman_hedge_ratio(y, x)
+        mine = kalman_hedge_ratio(y, x)
+        matched = max(matched, float(np.max(np.abs(matched_prior(y, x) - his))))
+        late = max(late, float(np.max(np.abs(mine[BURN_IN:] - his[BURN_IN:]))))
+        early = max(early, float(np.max(np.abs(mine[:200] - his[:200]))))
+    with capsys.disabled():
+        print(
+            "\n[darsh vs jatin] kalman, 19 pairs vs BTC: "
+            f"matched prior max |diff| {matched:.1e}; own defaults max |diff| "
+            f"{early:.2f} in the first 200 h, {late:.1e} after hour {BURN_IN}"
+        )
+    assert matched < 1e-10
+    assert late < 5e-3
+    assert early > 0.1  # the priors do differ; if this fails, the note above is stale
+
+
+@needs_jatin
+def test_compare_kalman_recovery_time_after_a_jump():
+    half = N_HOURS // 2
+    for seed in range(3):
+        y, x = make_pair(seed=seed, beta=jump_beta())
+        his = hours_to_band(jatin.kalman_hedge_ratio(y, x), 0.8, start=half)
+        mine = hours_to_band(kalman_hedge_ratio(y, x), 0.8, start=half)
+        assert his == mine
+
+
+@needs_jatin
+def test_compare_kalman_with_missing_hours():
+    y, x = make_pair(seed=3, beta=1.5)
+    rng = np.random.default_rng(33)
+    y_gap, x_gap = y.copy(), x.copy()
+    y_gap[rng.choice(np.arange(10, N_HOURS), 300, replace=False)] = np.nan
+    x_gap[rng.choice(np.arange(10, N_HOURS), 300, replace=False)] = np.nan
+    y_gap[6_000:6_100] = np.nan
+
+    his = jatin.kalman_hedge_ratio(y_gap, x_gap)
+    idx = np.flatnonzero(~(np.isfinite(y_gap) & np.isfinite(x_gap)))
+    assert np.all(np.isfinite(his))
+    np.testing.assert_array_equal(his[idx], his[idx - 1])
+    # Both add process noise through a gap; a filter that froze its covariance
+    # there would differ by about 6e-3 right after the 100-hour outage.
+    np.testing.assert_allclose(matched_prior(y_gap, x_gap), his, rtol=0.0, atol=1e-10)
+
+
+@needs_jatin
+def test_jatin_kalman_has_no_look_ahead(log_close):
+    series = [make_pair(seed=1, beta=jump_beta())]
+    if "ETHUSDT" in log_close and "BTCUSDT" in log_close:
+        series.append((log_close["ETHUSDT"], log_close["BTCUSDT"]))
+
+    for y, x in series:
+        full = jatin.kalman_hedge_ratio(y, x)
+        for cut in (1, 2, 50, 3_000, len(y) // 2 + 1, len(y) - 1):
+            np.testing.assert_array_equal(jatin.kalman_hedge_ratio(y[:cut], x[:cut]), full[:cut])
+
+        cut = 5_000
+        y2, x2 = y.copy(), x.copy()
+        y2[cut:] += 3.0
+        x2[cut:] = np.nan
+        np.testing.assert_array_equal(jatin.kalman_hedge_ratio(y2, x2)[:cut], full[:cut])
