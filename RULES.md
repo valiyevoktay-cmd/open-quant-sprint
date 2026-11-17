@@ -1,4 +1,4 @@
-# Sprint 01 Rules (v1.10)
+# Sprint 01 Rules (v1.11)
 
 Changes to these rules are listed in `CHANGELOG.md`.
 
@@ -99,8 +99,8 @@ The audit takes a panel (`--data`) and the period that follows it (`--holdout`),
 error if the period does not start exactly one hour after the panel ends.
 
 Nov 22, holdout: `--data data/train_1h.parquet --holdout data/holdout_1h.parquet`. The two files are
-contiguous already. The continuation check of step 2 below runs on them as well, and its output is
-published with the log.
+contiguous already. The continuation check of step 2 below runs on them as well, with
+`--end 2026-10-18T14:00`, and its output is published with the log.
 
 Dec 7, forward:
 
@@ -113,15 +113,16 @@ Dec 7, forward:
 2. Check that the period continues the panel, and list the first bar, the last bar and the number of
    bars of every symbol in both files:
    ```
-   python -m src.contrib.yousof --continuation data/forward/panel/panel_1h.parquet data/forward/period/panel_1h.parquet --as-of <download time> > data/forward/continuation.txt
+   python -m src.contrib.yousof --continuation data/forward/panel/panel_1h.parquet data/forward/period/panel_1h.parquet --as-of <download time> --end 2026-12-06T23:00 > data/forward/continuation.txt
    python -c "import sys, pandas as pd; [print(f, pd.read_parquet(f).groupby('symbol')['timestamp'].agg(['min', 'max', 'count']), sep='\n') for f in sys.argv[1:]]" data/forward/panel/panel_1h.parquet data/forward/period/panel_1h.parquet > data/forward/bars.txt
    ```
    Expected: every symbol from 00:00 on Jan 1, 2025 to 23:00 on Nov 21, 2026 in the panel (16,560
    bars), and from 00:00 on Nov 22 to 23:00 on Dec 6 in the period (360 bars). The check prints
-   `no problems` or one line per problem. A `warning:` line names hours without a bar and bars the
-   builder filled in: it fills a gap of up to 3 hours by carrying the close forward, with zero volume
-   and zero funding, and drops the hours of a longer gap. An `error:` line means the period cannot be
-   evaluated as it is; the command then exits with 1, or with 2 if a file cannot be read.
+   `no problems` or one line per problem. A `warning:` line names hours without a bar up to 23:00 on
+   Dec 6, and bars the builder filled in: it fills a gap of up to 3 hours by carrying the close
+   forward, with zero volume and zero funding, and drops the hours of a longer gap. An `error:` line
+   means the period cannot be evaluated as it is; the command then exits with 1, or with 2 if a file
+   cannot be read.
    - If there is any warning or error, or the list differs from the expected one, build both files
      again, once, with the same commands plus `--overwrite`, and repeat this step. There is no
      further download.

@@ -43,6 +43,11 @@ Checks beyond the Issue, and what each is for:
   for one symbol leaves no gap inside the file, only a shorter tail,
   and the last hours then lack that symbol in the cross-section: its
   missing hours are named. Bars after the others end are an error.
+  Without ``end`` the end of the file is the last bar most symbols
+  have, so a file cut short for every symbol, or for most of them,
+  cannot be told from a complete one. With ``end`` (``--end``) it is
+  given: bars after it are an error and the hours a symbol lacks
+  before it are warnings, however many symbols are short.
 - Bars with zero volume, as a warning. The train panel has none, so
   in a new file they are bars the builder filled in.
 - Funding that is zero at every settlement hour of a symbol, as a
@@ -175,6 +180,7 @@ def check_continuation(
     prev: pd.DataFrame,
     new: pd.DataFrame,
     as_of: pd.Timestamp | None = None,
+    end: pd.Timestamp | None = None,
 ) -> list[str]:
     """List what keeps ``new`` from cleanly continuing ``prev``.
 
@@ -186,8 +192,24 @@ def check_continuation(
 
     ``as_of`` is the download time; without a time zone it is read as
     UTC. With it, bars that had not closed by then are reported.
+
+    ``end`` is the open time of the last bar ``new`` should have, read
+    the same way. With it, bars after ``end`` are an error and the
+    hours a symbol lacks up to ``end`` are warnings. Without it the end
+    is the last bar most symbols have.
     """
     errors, frames = _prepare(prev, new)
+    if end is not None:
+        try:
+            end = _utc(end)
+        except (ValueError, TypeError):
+            end = pd.NaT
+        if pd.isna(end):
+            errors.append(
+                "end is not a time, so the end of new was compared with "
+                "the other symbols instead"
+            )
+            end = None
     warnings: list[str] = []
     if frames is not None:
         prev, new = frames
@@ -195,7 +217,7 @@ def check_continuation(
         on_grid = new.loc[~off_grid]
         errors += _symbol_errors(prev, new)
         errors += _key_errors(prev, new, off_grid)
-        seam_errors, gaps = _seam_problems(prev, on_grid)
+        seam_errors, gaps = _seam_problems(prev, on_grid, end)
         errors += seam_errors
         warnings += gaps
         warnings += _seam_jump_warnings(prev, on_grid)
@@ -377,15 +399,20 @@ def _key_errors(
 
 
 def _seam_problems(
-    prev: pd.DataFrame, on_grid: pd.DataFrame
+    prev: pd.DataFrame,
+    on_grid: pd.DataFrame,
+    end: pd.Timestamp | None = None,
 ) -> tuple[list[str], list[str]]:
     """Where ``new`` starts and ends, and the hours it lacks.
 
     Errors: the file does not start one hour after ``prev`` ends, which
-    the audit stops on, or a symbol has bars after the others end.
-    Warnings: the hours a symbol lacks between the start of the file
-    and the end of the others. Symbols with the same problem share one
-    line, so an hour missing across the panel is one line, not 20.
+    the audit stops on, or a symbol has bars after the others end (after
+    ``end`` when it is given). Warnings: the hours a symbol lacks
+    between its last bar in ``prev`` and that end. A symbol cut short
+    at the end of ``prev`` is a warning too: the audit compares the
+    start of the file with the end of the whole panel. Symbols with the
+    same problem share one line, so an hour missing across the panel is
+    one line, not 20.
     """
     if on_grid.empty:
         return [], []
@@ -393,30 +420,36 @@ def _seam_problems(
     stamps = on_grid.drop_duplicates(KEYS).groupby("symbol")["timestamp"]
     starts, ends = stamps.min(), stamps.max()
     # On a tie the later end is the reference: a file cut short must
-    # not make the complete symbols look wrong.
-    common_end = ends.mode().max()
+    # not make the complete symbols look wrong. A given end replaces it.
+    common_end = ends.mode().max() if end is None else end
     checked = sorted(set(starts.index) & set(prev_end.index))
     if not checked:
         return [], []
     expected = prev_end[checked] + HOUR
     file_start = starts[checked].min()
+    # The audit's check: the file starts one hour after the panel ends.
+    file_expected = prev_end.max() + HOUR
+    late_file = file_start > file_expected
     wrong: dict[str, list[str]] = {}
     lacking: dict[str, list[str]] = {}
     for sym in checked:
-        if starts[sym] == file_start != expected[sym]:
+        if starts[sym] == file_start != file_expected:
             msg = (
                 f"new starts at {_fmt(file_start)} UTC, expected "
-                f"{_fmt(expected[sym])}, one hour after prev ends"
+                f"{_fmt(file_expected)}, one hour after prev ends"
             )
             wrong.setdefault(msg, []).append(sym)
         if ends[sym] > common_end:
             msg = (
                 f"new ends at {_fmt(ends[sym])} UTC, most symbols end at "
                 f"{_fmt(common_end)}"
+                if end is None
+                else f"new ends at {_fmt(ends[sym])} UTC, after the "
+                f"expected end {_fmt(end)}"
             )
             wrong.setdefault(msg, []).append(sym)
         # Hours before a late start of the whole file are that error.
-        first = max(expected[sym], file_start)
+        first = max(expected[sym], file_start) if late_file else expected[sym]
         grid = pd.date_range(first, common_end, freq="h")
         gaps = grid.difference(pd.DatetimeIndex(stamps.get_group(sym)))
         if not gaps.empty:
@@ -1387,7 +1420,9 @@ def _cell(text: str) -> str:
     return text.replace("|", "\\|")
 
 
-def _check_files(prev: str, new: str, as_of: str | None = None) -> int:
+def _check_files(
+    prev: str, new: str, as_of: str | None = None, end: str | None = None
+) -> int:
     """Print what ``check_continuation`` finds for two data files.
 
     The first lines name the files with the hash the audit prints for
@@ -1402,7 +1437,7 @@ def _check_files(prev: str, new: str, as_of: str | None = None) -> int:
             return 2
     print(f"prev: {prev} (sha256 {file_hash(prev)})")
     print(f"new: {new} (sha256 {file_hash(new)})")
-    problems = check_continuation(*frames, as_of=as_of)
+    problems = check_continuation(*frames, as_of=as_of, end=end)
     print("\n".join(problems) if problems else "no problems")
     return 1 if any(line.startswith("error:") for line in problems) else 0
 
@@ -1418,8 +1453,9 @@ def main(argv: list[str] | None = None) -> int:
 
     ``--continuation PREV NEW`` runs ``check_continuation`` on two
     data files instead and prints what it finds, ``--as-of`` being the
-    download time of NEW. It returns 1 on an error, 2 when a file
-    cannot be read, else 0; warnings alone are 0.
+    download time of NEW and ``--end`` the open time of its last bar.
+    It returns 1 on an error, 2 when a file cannot be read, else 0;
+    warnings alone are 0.
     """
     parser = argparse.ArgumentParser(
         prog="python -m src.contrib.yousof",
@@ -1436,13 +1472,20 @@ def main(argv: list[str] | None = None) -> int:
         "--as-of", metavar="TIME",
         help="with --continuation: when NEW was downloaded (UTC)",
     )
+    parser.add_argument(
+        "--end", metavar="TIME",
+        help="with --continuation: open time of the last bar NEW should "
+        "have (UTC)",
+    )
     args = parser.parse_args(argv)
     if args.continuation:
         if args.reports or args.data or args.holdout:
-            parser.error("--continuation takes only --as-of")
-        return _check_files(*args.continuation, as_of=args.as_of)
-    if args.as_of:
-        parser.error("--as-of needs --continuation")
+            parser.error("--continuation takes only --as-of and --end")
+        return _check_files(
+            *args.continuation, as_of=args.as_of, end=args.end
+        )
+    if args.as_of or args.end:
+        parser.error("--as-of and --end need --continuation")
     paths = args.reports
     texts: list[tuple[str | None, str]] = []
     blocks: list[str] = []

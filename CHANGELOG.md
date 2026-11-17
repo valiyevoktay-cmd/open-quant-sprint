@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.11 (2026-11-17)
+
+Rules and documentation (audit unchanged, version 1.3.2)
+- `RULES.md`: the continuation check of the Dec 7 procedure runs with `--end 2026-12-06T23:00`, the
+  last bar the period should have (`--end 2026-10-18T14:00` on Nov 22). Before, the check took the
+  last bar most symbols have as the end, so a period cut short for every symbol passed without a
+  word, and one cut short for most of them made the complete symbols look wrong.
+- `src/contrib/yousof.py` (Track 01): `--end` and `end=` in `check_continuation`. A symbol cut short
+  at the end of the panel is now a warning that names its missing hours, as the audit runs on such a
+  file; before, it was an error.
+
 ## v1.10 (2026-11-17)
 
 Rules and documentation (audit unchanged, version 1.3.2)

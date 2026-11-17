@@ -281,6 +281,77 @@ def test_existing_checks_pass_a_symbol_short_at_either_end(
     ]
 
 
+def test_symbol_cut_short_in_prev_is_a_warning(split: Split) -> None:
+    # The audit compares the start of the file with the end of the
+    # whole panel, so it runs on this; the missing hours are named.
+    prev, new = split
+    sym = _sym(new)
+    last = prev["timestamp"].max()
+    tail = (prev["symbol"] == sym) & (prev["timestamp"] > last - 6 * HOUR)
+    short = prev.loc[~tail]
+    assert holdout_start_problem(short, new) is None
+    assert check_continuation(short, new) == [
+        f"warning: {sym}: no bar from {_fmt(last - 5 * HOUR)} to "
+        f"{_fmt(last)} UTC (6 missing)"
+    ]
+
+
+def test_without_end_a_file_short_everywhere_looks_complete(
+    split: Split,
+) -> None:
+    # Why --end exists: the last bar most symbols have is the end.
+    prev, new = split
+    end = new["timestamp"].max()
+    assert check_continuation(prev, new.loc[new["timestamp"] != end]) == []
+
+
+def test_with_end_a_file_short_everywhere_is_a_warning(split: Split) -> None:
+    prev, new = split
+    end = new["timestamp"].max()
+    n_sym = new["symbol"].nunique()
+    short = new.loc[new["timestamp"] < end - HOUR]
+    assert check_continuation(prev, short, end=end) == [
+        f"warning: all {n_sym} symbols: no bar from {_fmt(end - HOUR)} to "
+        f"{_fmt(end)} UTC (2 missing)"
+    ]
+    assert check_continuation(prev, new, end=end) == []
+
+
+def test_with_end_most_symbols_short_blames_only_those(split: Split) -> None:
+    # Without end, 11 of 20 short make the 9 complete ones the error.
+    prev, new = split
+    syms = sorted(new["symbol"].unique())[:11]
+    end = new["timestamp"].max()
+    cut_short = new["symbol"].isin(syms) & (new["timestamp"] == end)
+    broken = new.loc[~cut_short]
+    assert _errors(check_continuation(prev, broken)) != []
+    assert check_continuation(prev, broken, end=end) == [
+        f"warning: {', '.join(syms)}: no bar at {_fmt(end)} UTC "
+        "(1 missing)"
+    ]
+
+
+def test_with_end_a_bar_after_it_is_an_error(split: Split) -> None:
+    prev, new = split
+    sym = _sym(new)
+    shifted = new.copy()
+    mask = shifted["symbol"] == sym
+    shifted.loc[mask, "timestamp"] = shifted.loc[mask, "timestamp"] + HOUR
+    end = new["timestamp"].max()
+    assert _errors(check_continuation(prev, shifted, end=end)) == [
+        f"error: {sym}: new ends at {_fmt(end + HOUR)} UTC, after the "
+        f"expected end {_fmt(end)}"
+    ]
+
+
+def test_end_that_cannot_be_read_is_an_error(split: Split) -> None:
+    prev, new = split
+    assert check_continuation(prev, new, end="not a time") == [
+        "error: end is not a time, so the end of new was compared with "
+        "the other symbols instead"
+    ]
+
+
 def test_missing_and_extra_symbols_are_reported(split: Split) -> None:
     prev, new = split
     sym = _sym(new)
@@ -481,6 +552,15 @@ def test_continuation_from_the_command_line(
     assert capsys.readouterr().out.splitlines()[2:] == [
         f"warning: {sym}: no bar at {_fmt(hour)} UTC (1 missing)"
     ]
+    # With --end, a file short for every symbol is a warning, exit 0.
+    end = new["timestamp"].max()
+    short_file = tmp_path / "short.pq"
+    new.loc[new["timestamp"] != end].to_parquet(short_file)
+    assert main(args[:2] + [str(short_file), "--end", str(end)]) == 0
+    assert capsys.readouterr().out.splitlines()[2:] == [
+        f"warning: all {new['symbol'].nunique()} symbols: no bar at "
+        f"{_fmt(end)} UTC (1 missing)"
+    ]
     downloaded = str(new["timestamp"].max() + HOUR / 2)
     assert main(args + ["--as-of", downloaded]) == 1
     assert "had not closed at download time" in capsys.readouterr().out
@@ -488,7 +568,11 @@ def test_continuation_from_the_command_line(
     # mixes the check with reports.
     assert main(args[:2] + [str(tmp_path / "gone.pq")]) == 2
     assert capsys.readouterr().out.startswith("Could not read ")
-    for wrong in (args + ["report.txt"], ["--as-of", downloaded]):
+    for wrong in (
+        args + ["report.txt"],
+        ["--as-of", downloaded],
+        ["--end", downloaded],
+    ):
         with pytest.raises(SystemExit) as stop:
             main(wrong)
         assert stop.value.code == 2
