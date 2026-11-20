@@ -1,0 +1,62 @@
+FIXED EXPLORATORY FOLLOW-UP PLAN — CANDIDATE B
+
+Record this in your PR BEFORE the new real-data performance run. Previous IC,
+beta diagnostics and economic results have already been examined. A local
+plan file is not evidence that it was posted. Keep the original audited
+strategy unchanged. Run each candidate once as planned, disclose any bug-fix
+reruns, and report every cost/delay outcome. No search over windows, signs,
+fractions, clock phases or cutoffs. A post-hoc historical split is not fresh
+validation. Do not tune on the sprint holdout or forward periods.
+
+Success is not merely losing less through lower exposure. Inspect gross/net
+PnL, fees, turnover per unit exposure, delay sensitivity and uncertainty.
+Candidate A additionally has a descriptive, EX-POST constant-scaled reference
+matching its average gross. This uses realized future exposures, is NOT a
+prospective strategy, has no inferential CI and is never audited/submitted.
+It is not volatility/risk matching. Cash (zero modeled PnL) is also a reference.
+Paired intervals are pointwise and exploratory, not multiple-testing-adjusted.
+
+{
+  "candidate": "B",
+  "trial_budget": "one fixed new specification per candidate; no retuning",
+  "hypothesis": "A slower momentum effect may persist through execution delay and daily trading costs.",
+  "reference": "original fast reversal (context, not a single-factor control)",
+  "universe": "18 alts; BTC/ETH zero",
+  "burnin_hours": 720,
+  "rules": {
+    "return_hours": 168,
+    "volatility_hours": 168,
+    "volatility": "std(ddof=1) of hourly log returns, through current closed bar",
+    "score": "168h log return / 168h hourly log-return volatility",
+    "decision_hours": 24,
+    "decision_phase": "UTC epoch-hour modulo24=0",
+    "deadband": 0.015,
+    "clip": 3,
+    "beta": false,
+    "flow_gate": false,
+    "weighting": "alt-only cross-sectional zscore; centered and unit-gross when active"
+  },
+  "common": {
+    "fees_bps": [
+      0,
+      3,
+      5,
+      10,
+      "repository tiered"
+    ],
+    "funding": true,
+    "lag_bars": [
+      1,
+      2
+    ],
+    "primary_cost_bps": 5,
+    "primary_lag_bars": 2,
+    "bootstrap_hours": 168,
+    "bootstrap_reps": 1000,
+    "seed": 20261116,
+    "accounting": "repository additive fixed-notional PnL; no terminal forced close",
+    "sample": "same dates for candidate/reference, beginning after720 prior hours",
+    "scope": "exploratory training reanalysis; earlier full-panel results already seen",
+    "limitations": "no spread, impact, margin liquidation, fill uncertainty or sealed validation"
+  }
+}
