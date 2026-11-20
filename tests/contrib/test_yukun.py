@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from src.backtest import run_backtest
-from src.contrib.yukun import daily_sigma_volume, impact_bps, turnover
+from src.contrib.yukun import daily_sigma_volume, impact_bps, run_impact_cost, turnover, weight_change
 
 N_HOURS, N_SYM = 2000, 5
 AUM = 1e6
@@ -181,3 +181,76 @@ def test_invalid_arguments(kwargs: dict) -> None:
     args = {"aum": AUM, **kwargs}
     with pytest.raises(ValueError):
         impact_bps(df, w, **args)
+
+
+def run_panel(noise: float = 0.0) -> tuple[pd.DataFrame, np.ndarray]:
+    """The test panel with weights only on S2: buys at hours 1000-1002 and 1004, a sell at 1005.
+
+    With lag 1 the trades are on bars 1001, 1002, 1003, 1005 (buys) and 1006 (sell). `noise` is
+    added to the weight of hour 1003, which makes a tiny buy on bar 1004.
+    """
+    df, _ = make_panel()
+    step = np.zeros(N_HOURS)
+    step[[1000, 1001, 1002, 1004]] = 0.1
+    step[1005] = -0.2
+    w = np.zeros((N_HOURS, N_SYM))
+    w[:, 2] = np.cumsum(step)
+    w[1003, 2] += noise
+    return df, w.ravel()
+
+
+def expected_run_cost(df: pd.DataFrame, bar: int, size: float) -> float:
+    sigma, volume = daily_sigma_volume(df)
+    r = bar * N_SYM + 2
+    return size * (2 / 3) * sigma[r] * np.sqrt(AUM * size / volume[r])
+
+
+def test_weight_change_sign() -> None:
+    df, w = run_panel()
+    change = weight_change(df, w).reshape(N_HOURS, N_SYM)[:, 2]
+    assert np.flatnonzero(change > 1e-12).tolist() == [1001, 1002, 1003, 1005]
+    assert np.flatnonzero(change < -1e-12).tolist() == [1006]
+    np.testing.assert_array_equal(np.abs(weight_change(*make_panel())), turnover(*make_panel()))
+
+
+@pytest.mark.parametrize(
+    ("gap", "runs"),
+    [(0, [(1001, 0.3), (1005, 0.1), (1006, 0.2)]), (1, [(1001, 0.4), (1006, 0.2)])],
+)
+def test_hand_computed_runs(gap: int, runs: list[tuple[int, float]]) -> None:
+    df, w = run_panel()
+    cost = run_impact_cost(df, w, AUM, gap=gap)
+    assert np.flatnonzero(cost).tolist() == [bar * N_SYM + 2 for bar, _ in runs]
+    for bar, size in runs:
+        assert cost[bar * N_SYM + 2] == pytest.approx(expected_run_cost(df, bar, size), rel=1e-10)
+
+
+def test_noise_below_tol_does_not_join_runs() -> None:
+    df, w = run_panel(noise=1e-15)
+    np.testing.assert_allclose(run_impact_cost(df, w, AUM), run_impact_cost(*run_panel(), AUM), rtol=1e-9)
+    joined = run_impact_cost(df, w, AUM, tol=0.0)  # the noise trade on bar 1004 bridges 1003 and 1005
+    assert np.count_nonzero(joined) == 2
+    assert joined[1001 * N_SYM + 2] == pytest.approx(expected_run_cost(df, 1001, 0.4), rel=1e-9)
+
+
+def test_runs_of_one_bar_cost_the_same_as_hourly() -> None:
+    df, _ = make_panel()
+    sign = np.where(np.arange(N_HOURS) % 2 == 0, 1.0, -1.0)
+    w = (sign[:, None] * np.array([0.05, 0.1, 0.15, 0.2, 0.25])).ravel()  # direction flips every bar
+    hourly = turnover(df, w) * impact_bps(df, w, AUM) * 1e-4
+    np.testing.assert_allclose(run_impact_cost(df, w, AUM), hourly, rtol=1e-12)
+
+
+def test_merged_cost_scales_with_sqrt_aum() -> None:
+    df, w = make_panel()
+    cost = run_impact_cost(df, w, AUM, gap=3)
+    ok = np.isfinite(cost) & (cost > 0)
+    assert ok.sum() > 100
+    np.testing.assert_allclose(run_impact_cost(df, w, 4 * AUM, gap=3)[ok], 2.0 * cost[ok], rtol=1e-12)
+
+
+@pytest.mark.parametrize("kwargs", [{"aum": 0.0}, {"y": -1.0}, {"gap": -1}, {"gap": 1.5}])
+def test_run_impact_cost_invalid_arguments(kwargs: dict) -> None:
+    df, w = make_panel()
+    with pytest.raises(ValueError):
+        run_impact_cost(df, w, **{"aum": AUM, **kwargs})
