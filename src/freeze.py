@@ -1,6 +1,7 @@
 """
-Code freeze record: SHA-256 of every strategy, contrib and harness file plus the dependency lock and
-the Dockerfile, in `sha256sum` format, so the official run can prove it used the frozen code.
+Code freeze record: SHA-256 of every strategy, contrib and harness file, the dataset builder, the
+dependency lock and the Dockerfile, in `sha256sum` format, so the official run can prove it used the
+frozen code.
 
     python -m src.freeze write [--image oqs-sandbox]   # writes benchmarks/freeze.txt
     python -m src.freeze check                         # exit 1 if any file changed, is missing or new
@@ -16,7 +17,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FREEZE_FILE = Path("benchmarks/freeze.txt")
-PATTERNS = ("strategies/*.py", "src/**/*.py", "requirements.lock", "Dockerfile")
+PATTERNS = ("strategies/*.py", "src/**/*.py", "data/*.py", "requirements.lock", "Dockerfile")
 
 
 def frozen_files(root: Path) -> list[str]:

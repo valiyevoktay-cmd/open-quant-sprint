@@ -510,6 +510,28 @@ def test_run_record_is_one_json_line(sample_panel: pd.DataFrame) -> None:
     assert len(rec["sharpe_5bps"]) == 3 and rec["holdout_status"] is None
 
 
+def test_run_record_of_a_crashed_strategy_is_strict_json(sample_panel: pd.DataFrame, tmp_path: Path) -> None:
+    import json
+
+    from src.audit import run_record
+    crash = tmp_path / "crash.py"
+    crash.write_text("def compute_weights(df):\n    raise RuntimeError('boom')\n", encoding="utf-8")
+    res = run_full_audit(sample_panel, crash, causality_seed=7)
+    line = json.dumps(run_record(res, {}, "crash.py"))
+
+    def no_nan(name: str) -> None:
+        raise ValueError(f"{name} in the log record")
+
+    rec = json.loads(line, parse_constant=no_nan)
+    assert rec["verdict"] == "REJECT" and rec["sharpe_5bps"] == [0.0, None, None]
+
+
+def test_freeze_record_covers_the_dataset_builder() -> None:
+    from src.freeze import REPO_ROOT, frozen_files
+    assert "data/build_dataset.py" in frozen_files(REPO_ROOT)
+    assert not any(f.endswith(".parquet") for f in frozen_files(REPO_ROOT))
+
+
 def test_freeze_record_detects_changed_new_and_missing_files(tmp_path: Path) -> None:
     from src.freeze import check, write
     for f, text in {"strategies/a.py": "x = 1\n", "src/m.py": "y = 2\n", "requirements.lock": "numpy==1\n"}.items():

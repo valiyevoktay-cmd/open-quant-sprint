@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.12 (2026-11-21)
+
+Audit (audit version 1.3.3). A run that finishes gives the same weights and verdict as before, and
+its report differs only in the version line.
+- The bar-by-bar run of one strategy may now take up to 3 hours (`STREAM_TIMEOUT_SEC` in
+  `src/sandbox.py`, 3600 to 10800 seconds). `angelo_closeloc` takes about 4.6 s a bar through the
+  stream on the last 30 hours of the training panel, so the 864 hours of the holdout would take about
+  67 minutes and stop at the old one-hour limit. The limit on a single call stays 300 seconds.
+- The `--log` record writes a missing Sharpe interval as `null`. Before, a strategy that crashed on
+  the panel left `NaN` in `sharpe_5bps`, and a strict JSON parser rejects that line.
+- `benchmarks/freeze.txt` also records `data/*.py`. The Dec 7 run builds the forward panel with
+  `data/build_dataset.py`, and that file was not in the record.
+- `src/contrib/yousof.py` (Track 01) reads reports of audit 1.3.3 without a version note. The report
+  format did not change.
+
 ## v1.11 (2026-11-17)
 
 Rules and documentation (audit unchanged, version 1.3.2)

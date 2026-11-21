@@ -597,7 +597,7 @@ WITHHELD_NOTE = (
 )
 VERSION_NOTE = (
     "audit v{} is not one this parser was checked against (1.0.0 to "
-    "1.3.2); compare the table with the report"
+    "1.3.3); compare the table with the report"
 )
 
 # What the saved reports hold, read off them by hand. Fields not named

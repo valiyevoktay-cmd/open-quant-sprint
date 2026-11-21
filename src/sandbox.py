@@ -20,7 +20,9 @@ from src.backtest import coerce_weights
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CALL_TIMEOUT_SEC = 300
-STREAM_TIMEOUT_SEC = 3600
+# The whole bar-by-bar run of one strategy. angelo_closeloc takes about 4.6 s a bar through the stream
+# on the full panel, so the 864-hour holdout needs about 67 minutes.
+STREAM_TIMEOUT_SEC = 10800
 # When set (audit --container), each strategy process runs in this Docker image instead of on the host.
 CONTAINER_ENV = "OQS_CONTAINER_IMAGE"
 

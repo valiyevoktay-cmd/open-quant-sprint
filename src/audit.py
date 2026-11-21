@@ -22,7 +22,7 @@ from src.sandbox import CONTAINER_ENV, isolated_call, isolated_call_timed, isola
 from src.schema import enforce_schema
 from src.stats import information_coefficient
 
-AUDIT_VERSION = "1.3.2"
+AUDIT_VERSION = "1.3.3"
 
 StrategyFn = Callable[[pd.DataFrame], pd.Series]
 Strategy = StrategyFn | str | Path
@@ -648,8 +648,11 @@ def baseline_correlation(df: pd.DataFrame, weights: pd.Series) -> float | None:
 
 def run_record(res: dict, provenance: dict, strategy_name: str) -> dict:
     """One JSON line per run for the official log: what was run, on what, and what came out."""
-    def sharpe(m: BacktestMetrics | None) -> list[float] | None:
-        return None if m is None else [round(float(x), 4) for x in (m.sharpe, m.sharpe_ci_low, m.sharpe_ci_high)]
+    def sharpe(m: BacktestMetrics | None) -> list[float | None] | None:
+        if m is None:
+            return None
+        # A missing interval is NaN in BacktestMetrics. JSON has no NaN, so it is written as null.
+        return [round(float(x), 4) if np.isfinite(x) else None for x in (m.sharpe, m.sharpe_ci_low, m.sharpe_ci_high)]
 
     h_eval = res.get("holdout_eval") or {}
     return {

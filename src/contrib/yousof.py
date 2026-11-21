@@ -97,7 +97,7 @@ Output cut off inside a line could read as another number there (-1.5
 for -1.53), so a last line without a line break is not read.
 An ``audit v...`` line outside CHECKED_VERSIONS, or none, is named
 too: the lines read here and the verdict rule are the same from 1.0.0
-to 1.3.2 (git history of src/audit.py), a later version may differ.
+to 1.3.3 (git history of src/audit.py), a later version may differ.
 
 The Result column. The report tags four checks itself: causality, lag
 test, null check and wick share; their tags are shown as they are.
@@ -599,7 +599,7 @@ def _funding_warnings(on_grid: pd.DataFrame) -> list[str]:
 # --- Part 2: the audit report as a table -----------------------------
 
 # Audit versions this parser was checked against (see the docstring).
-CHECKED_VERSIONS = ("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.3.1", "1.3.2")
+CHECKED_VERSIONS = ("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.3.1", "1.3.2", "1.3.3")
 ONE_LINE_ERRORS = (1, 3, 2)  # audit version that prints errors on one line
 TURNOVER_MIN = 1e-5  # the audit's turnover gate at 5 bps
 LAG_SLACK = 0.5  # the audit's lag rule for a 1-bar Sharpe not above 0
