@@ -1,6 +1,10 @@
 ## Summary & Hypothesis
 <!-- 2-4 sentences describing the mathematical/microstructure mechanism or infrastructure change -->
 
+Track issue: #
+Part: <!-- Part 1 / Part 2 / infrastructure -->
+Supersedes: <!-- PR number, if this replaces an earlier attempt -->
+
 ## Local Verification Checklist
 - [ ] `python -m pytest -v` passes locally with zero failures.
 - [ ] If submitting/updating a strategy in `strategies/<name>.py`, I ran `python -m src.audit strategies/<name>.py` and pasted the output below. Any verdict is acceptable: a REJECT is a valid research result (see `RULES.md`).
