@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from src.contrib.christine import effective_trials, sharpe_spread
+from src.contrib.christine import effective_trials, sharpe_spread, bootstrap_hourly_sharpes
 
 
 def test_identical_strategies():
@@ -170,3 +170,95 @@ def test_infinite_returns():
 
     with pytest.raises(ValueError, match="finite values"):
         sharpe_spread(returns)
+
+
+
+def test_bootstrap_hourly_sharpes_reproducibility():
+    """Fixed seeds should produce identical bootstrap results."""
+    rng = np.random.default_rng(123)
+    returns = rng.normal(0.001, 0.02, size=1000)
+
+    result1 = bootstrap_hourly_sharpes(
+        returns,
+        block_size=24,
+        n_bootstrap=100,
+        seed=42,
+    )
+
+    result2 = bootstrap_hourly_sharpes(
+        returns,
+        block_size=24,
+        n_bootstrap=100,
+        seed=42,
+    )
+
+    assert result1.shape == (100,)
+    assert np.isfinite(result1).all()
+    assert np.std(result1, ddof=1) > 0
+
+    np.testing.assert_array_equal(result1, result2)
+
+
+def test_bootstrap_hourly_sharpes_location_invariance():
+    """Adding a constant should not affect centered bootstrap Sharpes."""
+    rng = np.random.default_rng(123)
+    returns = rng.normal(0, 0.02, size=1000)
+
+    shifted_returns = returns + 0.01
+
+    original = bootstrap_hourly_sharpes(
+        returns,
+        block_size=24,
+        n_bootstrap=100,
+        seed=42,
+    )
+
+    shifted = bootstrap_hourly_sharpes(
+        shifted_returns,
+        block_size=24,
+        n_bootstrap=100,
+        seed=42,
+    )
+
+    np.testing.assert_allclose(
+        original,
+        shifted,
+        rtol=0,
+        atol=1e-12,
+    )
+
+
+def test_bootstrap_hourly_sharpes_full_length_block():
+    """Resampling the entire centered series should give zero Sharpe."""
+    rng = np.random.default_rng(123)
+    returns = rng.normal(0.001, 0.02, size=100)
+
+    result = bootstrap_hourly_sharpes(
+        returns,
+        block_size=len(returns),
+        n_bootstrap=50,
+        seed=42,
+    )
+
+    assert result.shape == (50,)
+
+    np.testing.assert_allclose(
+        result,
+        np.zeros(50),
+        rtol=0,
+        atol=1e-12,
+    )
+
+
+def test_bootstrap_rejects_constant_returns():
+    returns = np.ones(100)
+
+    with pytest.raises(ValueError, match="constant returns"):
+        bootstrap_hourly_sharpes(returns)
+
+
+def test_bootstrap_rejects_short_input():
+    returns = np.arange(10, dtype=float)
+
+    with pytest.raises(ValueError, match="block_size"):
+        bootstrap_hourly_sharpes(returns, block_size=24)

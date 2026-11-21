@@ -111,3 +111,54 @@ def sharpe_spread(returns: np.ndarray) -> float:
     sample_var = np.var(sharpes, ddof=1)
 
     return float(sample_var)
+
+def bootstrap_hourly_sharpes(
+    returns,
+    block_size=24,
+    n_bootstrap=2000,
+    seed=42
+):
+    """Estimate hourly Sharpe variance under a zero-mean null."""
+
+    rng = np.random.default_rng(seed)
+
+    centered_returns = returns - np.mean(returns)
+    n = len(centered_returns)
+
+
+    if n < 2:
+        raise ValueError("At least two returns are required.")
+
+    if block_size < 1 or block_size > n:
+        raise ValueError("block_size must be between 1 and the number of returns.")
+
+    if np.all(returns == returns[0]):
+        raise ValueError("Cannot calculate Sharpe ratios for constant returns.")
+
+
+    blocks_needed = int(np.ceil(n / block_size))
+    bootstrap_sharpes = []
+
+    for _ in range(n_bootstrap):
+
+        starting_indices = rng.integers(
+            low=0,
+            high=n - block_size + 1,
+            size=blocks_needed
+        )
+
+        blocks = [
+            centered_returns[i:i + block_size]
+            for i in starting_indices
+        ]
+
+        bootstrap_sample = np.concatenate(blocks)[:n]
+
+        sr = np.mean(bootstrap_sample) / np.std(
+            bootstrap_sample, ddof=1
+        )
+        bootstrap_sharpes.append(sr)
+
+    bootstrap_sharpes = np.array(bootstrap_sharpes)
+
+    return bootstrap_sharpes
