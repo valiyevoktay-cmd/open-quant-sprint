@@ -25,6 +25,11 @@ from src.backtest import coerce_weights
 
 def turnover(df: pd.DataFrame, weights, lag_bars: int = 1) -> np.ndarray:
     """Turnover that run_backtest charges on each row; the lines are copied from run_backtest."""
+    return np.abs(weight_change(df, weights, lag_bars))
+
+
+def weight_change(df: pd.DataFrame, weights, lag_bars: int = 1) -> np.ndarray:
+    """Signed change of the held weight on each row: positive for a buy, negative for a sell."""
     if lag_bars < 1:
         raise ValueError(f"lag_bars must be >= 1 to prevent same-bar execution leak, got {lag_bars}")
 
@@ -37,7 +42,7 @@ def turnover(df: pd.DataFrame, weights, lag_bars: int = 1) -> np.ndarray:
 
     work["w_held"] = work.groupby("symbol")["w"].shift(lag_bars).fillna(0.0)
     work["w_prev_held"] = work.groupby("symbol")["w_held"].shift(1).fillna(0.0)
-    return (work["w_held"] - work["w_prev_held"]).abs().to_numpy(dtype=np.float64)
+    return (work["w_held"] - work["w_prev_held"]).to_numpy(dtype=np.float64)
 
 
 def daily_sigma_volume(df: pd.DataFrame, days: int = 30) -> tuple[np.ndarray, np.ndarray]:
@@ -88,3 +93,60 @@ def impact_bps(
 
     cost = (2.0 / 3.0) * y * sigma * np.sqrt(aum * to / volume) * 1e4
     return np.where(to > 0, cost, 0.0)
+
+
+def run_impact_cost(
+    df: pd.DataFrame,
+    weights,
+    aum: float,
+    y: float = 1.0,
+    days: int = 30,
+    lag_bars: int = 1,
+    gap: int = 0,
+    tol: float = 1e-12,
+) -> np.ndarray:
+    """Impact cost, as a fraction of aum, when runs of same-direction trades are one parent order.
+
+    Per symbol, a trade is a row whose weight change exceeds tol in absolute value. Trades with the
+    same sign belong to one run while at most `gap` bars without a trade lie between them; a trade
+    in the other direction starts a new run. A run of total turnover S whose first row is r costs
+
+        S * (2/3) * y * sigma_d[r] * sqrt(aum * S / V_d[r])
+
+    placed on row r, 0 on every other row. A run of one row costs turnover * impact_bps * 1e-4.
+    The cost on row r depends on the later rows of its run, so this is an ex-post total for
+    analysis, not a fee to pass to run_backtest. NaN where sigma_d or V_d is not available at r.
+    """
+    if not aum > 0:
+        raise ValueError(f"aum must be positive, got {aum}")
+    if not y >= 0:
+        raise ValueError(f"y must be non-negative, got {y}")
+    if gap < 0 or int(gap) != gap:
+        raise ValueError(f"gap must be a non-negative integer, got {gap}")
+
+    change = weight_change(df, weights, lag_bars)
+    sigma, volume = daily_sigma_volume(df, days)
+    volume = np.where(volume > 0, volume, np.nan)
+
+    rows = np.flatnonzero(np.abs(change) > tol)
+    trades = pd.DataFrame(
+        {
+            "symbol": df["symbol"].to_numpy()[rows],
+            "pos": df.groupby("symbol").cumcount().to_numpy()[rows],
+            "sign": np.sign(change[rows]),
+            "size": np.abs(change[rows]),
+        }
+    )
+    by_symbol = trades.groupby("symbol")
+    new_run = (
+        by_symbol["sign"].shift(1).ne(trades["sign"])  # first trade of a symbol: NaN != sign
+        | (trades["pos"] - by_symbol["pos"].shift(1) - 1 > gap)
+    )
+    run_id = new_run.groupby(trades["symbol"]).cumsum()
+    run_size = trades["size"].groupby([trades["symbol"], run_id]).transform("sum").to_numpy()
+
+    first = rows[new_run.to_numpy()]
+    size = run_size[new_run.to_numpy()]
+    cost = np.zeros(len(df))
+    cost[first] = size * (2.0 / 3.0) * y * sigma[first] * np.sqrt(aum * size / volume[first])
+    return cost
