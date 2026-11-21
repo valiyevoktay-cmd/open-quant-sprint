@@ -29,7 +29,11 @@ def train() -> pd.DataFrame:
 
 def _with_log_returns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    out["log_return"] = np.log(out["close"]).groupby(out["symbol"], sort=False).diff()
+    log_close = pd.Series(
+        np.log(pd.to_numeric(out["close"], errors="raise").to_numpy(dtype=np.float64)),
+        index=out.index,
+    )
+    out["log_return"] = log_close.groupby(out["symbol"], sort=False).diff()
     return out
 
 
@@ -72,8 +76,13 @@ def _market_reference(
     work = df[["timestamp", "symbol", "close"]].copy()
     work = work.sort_values(["symbol", "timestamp"], kind="stable").reset_index(drop=True)
     with np.errstate(divide="ignore", invalid="ignore"):
-        log_close = np.log(pd.to_numeric(work["close"], errors="raise"))
+        log_values = np.log(
+            pd.to_numeric(work["close"], errors="raise").to_numpy(dtype=np.float64)
+        )
+    log_close = pd.Series(log_values, index=work.index)
     work["_return"] = log_close.groupby(work["symbol"], sort=False).diff()
+    elapsed = work.groupby("symbol", sort=False)["timestamp"].diff()
+    work.loc[elapsed.ne(pd.Timedelta(hours=1)), "_return"] = np.nan
     returns = work.pivot(index="timestamp", columns="symbol", values="_return")
     y = returns[leader].to_numpy(dtype=np.float64)
     beta = np.full(returns.shape, np.nan, dtype=np.float64)
@@ -109,8 +118,8 @@ def _market_reference(
         corr[ends, column] = corr_values
         residual[ends, column] = x_valid[:, -1] - beta_values * y_valid[:, -1]
 
-    row_times = returns.index.get_indexer(df["timestamp"])
-    row_symbols = returns.columns.get_indexer(df["symbol"])
+    row_times = returns.index.get_indexer(pd.Index(df["timestamp"]))
+    row_symbols = returns.columns.get_indexer(pd.Index(df["symbol"]))
     return {
         "beta": beta[row_times, row_symbols],
         "corr": corr[row_times, row_symbols],
@@ -245,8 +254,9 @@ def test_rolling_market_statistics_are_causal_and_handle_edges() -> None:
     beta = rolling_beta(df, window=window)
     corr = rolling_corr(df, window=window)
     for positions in df.groupby("symbol", sort=False).indices.values():
-        assert beta.iloc[positions[:5]].isna().all()
-        assert corr.iloc[positions[:5]].isna().all()
+        row_positions = np.asarray(positions, dtype=np.intp)
+        assert beta.iloc[row_positions[:5]].isna().all()
+        assert corr.iloc[row_positions[:5]].isna().all()
 
     # A constant return series has zero variance, so its Pearson correlation is undefined.
     flat = df.copy()
@@ -254,3 +264,30 @@ def test_rolling_market_statistics_are_causal_and_handle_edges() -> None:
     flat.loc[alt_positions, "close"] = 50.0
     flat_corr = rolling_corr(flat, window=window)
     assert flat_corr.loc[alt_positions].iloc[5:].isna().all()
+
+
+def test_rolling_market_statistics_require_consecutive_hourly_returns() -> None:
+    timestamps = pd.date_range("2025-01-01", periods=160, freq="h", tz="UTC")
+    t = np.arange(len(timestamps), dtype=np.float64)
+    rows = []
+    for symbol, returns in (
+        ("BTCUSDT", 0.001 * np.sin(t / 3.0) + 0.0002 * np.cos(t / 7.0)),
+        ("ALTUSDT", 0.0015 * np.cos(t / 4.0) + 0.0003 * np.sin(t / 9.0)),
+    ):
+        closes = 100.0 * np.exp(np.r_[0.0, np.cumsum(returns[1:])])
+        rows.extend(
+            {"timestamp": timestamp, "symbol": symbol, "close": close}
+            for timestamp, close in zip(timestamps, closes)
+            if not (symbol == "ALTUSDT" and timestamp == timestamps[80])
+        )
+    df = pd.DataFrame(rows).sort_values(["timestamp", "symbol"]).reset_index(drop=True)
+    during_gap_window = timestamps[120]
+    after_gap_window = timestamps[153]
+
+    for function in (rolling_beta, rolling_corr, rolling_residual):
+        result = function(df, window=72)
+        alt = df["symbol"].eq("ALTUSDT")
+        btc = df["symbol"].eq("BTCUSDT")
+        assert result.loc[alt & df["timestamp"].eq(during_gap_window)].isna().all()
+        assert result.loc[btc & df["timestamp"].eq(during_gap_window)].notna().all()
+        assert result.loc[alt & df["timestamp"].eq(after_gap_window)].notna().all()

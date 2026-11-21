@@ -172,6 +172,8 @@ def _rolling_market_calculation(
     work["_return"] = pd.Series(log_close, index=work.index).groupby(
         work["symbol"], sort=False
     ).diff()
+    elapsed = work.groupby("symbol", sort=False)["timestamp"].diff()
+    work.loc[elapsed.ne(pd.Timedelta(hours=1)), "_return"] = np.nan
     returns = work.pivot(index="timestamp", columns="symbol", values="_return")
     if leader not in returns.columns:
         raise KeyError(f"leader symbol {leader!r} is not present in df")
@@ -251,8 +253,8 @@ def _rolling_market_calculation(
             np.divide(cross, denom, out=corr_chunk, where=good & (denom > 0.0))
             result[ends] = corr_chunk
 
-    row_times = returns.index.get_indexer(df["timestamp"])
-    row_symbols = returns.columns.get_indexer(df["symbol"])
+    row_times = returns.index.get_indexer(pd.Index(df["timestamp"]))
+    row_symbols = returns.columns.get_indexer(pd.Index(df["symbol"]))
     row_result = result[row_times, row_symbols]
     return pd.Series(row_result, index=df.index, name=f"rolling_{statistic}")
 
