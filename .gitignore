@@ -7,6 +7,8 @@ venv/
 data/holdout_*.parquet
 data/synthetic/
 data/forward/
+.DS_Store
+ src/.DS_Store
 PROJECT_CONTEXT.md
 cohort/
 second-brain/
