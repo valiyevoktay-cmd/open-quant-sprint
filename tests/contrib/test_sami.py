@@ -4,7 +4,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.contrib.sami import abnormal_volume
+from src.contrib.sami import (
+    abnormal_volume,
+    bootstrap_pvalue,
+    holm_adjust,
+    moving_block_bootstrap_means,
+)
 
 
 @pytest.fixture(scope="module")
@@ -173,3 +178,36 @@ def test_input_order_and_non_default_index_are_preserved(
         atol=1e-12,
         equal_nan=True,
     )
+
+
+def test_holm_adjust_preserves_order_and_controls_family_error() -> None:
+    actual = holm_adjust(np.array([0.01, 0.04, 0.03]))
+
+    np.testing.assert_allclose(actual, [0.03, 0.06, 0.06])
+
+
+def test_bootstrap_pvalue_uses_two_sided_tail_shares() -> None:
+    actual = bootstrap_pvalue(np.array([-3.0, -2.0, -1.0, 1.0, 2.0, 3.0, 4.0, 5.0]))
+
+    assert actual == 0.75
+
+
+def test_moving_block_bootstrap_matches_contiguous_block_resampling() -> None:
+    values = np.arange(24 * 11 + 5, dtype=np.float64)
+    values[10] = np.nan
+    n_boot = 20
+    block = 24 * 2
+    n_blocks = int(np.ceil(len(values) / block))
+    last_block = len(values) - (n_blocks - 1) * block
+    starts = np.random.default_rng(7).integers(
+        0, len(values) - block + 1, size=(n_boot, n_blocks)
+    )
+    expected = []
+    for sample_starts in starts:
+        parts = [values[start : start + block] for start in sample_starts[:-1]]
+        parts.append(values[sample_starts[-1] : sample_starts[-1] + last_block])
+        expected.append(float(np.nanmean(np.concatenate(parts))))
+
+    actual = moving_block_bootstrap_means(values, block_days=2, n_boot=n_boot, seed=7)
+
+    np.testing.assert_allclose(actual, expected)
