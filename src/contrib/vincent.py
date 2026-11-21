@@ -2,18 +2,28 @@
 Track 10: the absorption ratio function code
 """
 
-import warnings
+#Part 1
 
 import numpy as np
 import pandas as pd
 
+# hours x symbols matrix of one column on a full hourly grid (used by Part 1 and Part 2)
+def to_wide(df, column):
+    wide_df = df.pivot(index="timestamp", columns="symbol", values=column)
+    wide_df = wide_df.reindex(pd.date_range(wide_df.index[0], wide_df.index[-1], freq="h"))
+    return wide_df
 
+
+# hours x symbols matrix of hourly log returns on a full hourly grid (used by Part 1 and Part 2)
+def hourly_log_returns(df):
+    return np.log(to_wide(df, "close")).diff()
+
+# function for absorption ratio
 def absorption_ratio(df, window= 168, k = 1):
 
 # hours x symbols matrix of hourly log returns on a full hourly grid
-    close_df = df.pivot(index="timestamp", columns="symbol", values="close")
-    close_df = close_df.reindex(pd.date_range(close_df.index[0], close_df.index[-1], freq="h"))
-    log_returns = np.log(close_df).diff().to_numpy()
+    returns_df = hourly_log_returns(df)
+    log_returns = returns_df.to_numpy()
 
 # NaN rule
     arr = np.full(len(log_returns), np.nan)
@@ -23,159 +33,98 @@ def absorption_ratio(df, window= 168, k = 1):
         if np.isnan(window_rets).any():
             continue
         # Covariance of the last window returns up to and including t, and its eigenvalues
-        eig = np.linalg.eigvalsh(np.cov(log_returns[t - window + 1 : t + 1], rowvar=False))
-        
+        eig = np.linalg.eigvalsh(np.cov(window_rets, rowvar=False))
+
         # Absorption ratio: k largest eigenvalues over the sum of all
         total = eig.sum()
         arr[t] = min(eig[-k:].sum() / total, 1.0)
 
-# 5. Same value on every row of that hour
-    by_hour = pd.Series(arr, index=close_df.index)
+# Same value on every row of that hour
+    by_hour = pd.Series(arr, index=returns_df.index)
     return df["timestamp"].map(by_hour)
 
 
-# ---------------------------------------------------------------------------
-# Part 2: per-hour rank IC, regimes by absorption ratio, day-block bootstrap
-# ---------------------------------------------------------------------------
+
+# Part 2
+
+# next hour's close-to-close log return at each hour
+def forward_returns(df):
+    return hourly_log_returns(df).shift(-1)
 
 
-def hourly_grid(df):
-    """Every hour from the first to the last timestamp in df."""
-    ts = df["timestamp"]
-    return pd.date_range(ts.min(), ts.max(), freq="h")
+# per-hour rank IC
+def rank_ic_by_hour(signal_df, fwd_df, min_symbols=10):
+
+# rank symbols within each hour
+    both = signal_df.notna() & fwd_df.notna()
+    signal_ranks = signal_df.where(both).rank(axis=1)
+    fwd_ranks = fwd_df.where(both).rank(axis=1)
+
+# Spearman = Pearson correlation of the ranks
+    signal_ranks = signal_ranks.sub(signal_ranks.mean(axis=1), axis=0)
+    fwd_ranks = fwd_ranks.sub(fwd_ranks.mean(axis=1), axis=0)
+    ic = (signal_ranks * fwd_ranks).sum(axis=1) / np.sqrt(
+        (signal_ranks**2).sum(axis=1) * (fwd_ranks**2).sum(axis=1))
+
+    return ic.where(both.sum(axis=1) >= min_symbols)
 
 
-def to_wide(df, values, grid=None):
-    """Row-aligned values -> (hours x symbols) frame on a full hourly grid.
-
-    Hours missing from df become NaN rows, so a shift by one row is always
-    a shift by one hour.
-    """
-    wide = pd.DataFrame(
-        {
-            "timestamp": df["timestamp"].to_numpy(),
-            "symbol": df["symbol"].to_numpy(),
-            "v": np.asarray(values, dtype=float),
-        }
-    ).pivot(index="timestamp", columns="symbol", values="v")
-    if grid is None:
-        grid = pd.date_range(wide.index[0], wide.index[-1], freq="h")
-    return wide.reindex(grid)
-
-
-def forward_returns(df, grid=None):
-    """Next hour close-to-close return, (hours x symbols).
-
-    Computed on the full hourly grid, so if hour t+1 is missing the forward
-    return at t is NaN rather than a jump to the next available row.
-    """
-    close = to_wide(df, df["close"], grid)
-    return close.shift(-1) / close - 1.0
-
-
-def rank_ic_by_hour(signal_w, fwd_w, min_symbols=10):
-    """Spearman correlation across symbols, one value per hour.
-
-    Uses only symbols where both the signal and the forward return exist.
-    Hours with fewer than `min_symbols` such symbols, or with a constant
-    signal or return, are NaN.
-    """
-    s = signal_w.to_numpy(dtype=float)
-    f = fwd_w.to_numpy(dtype=float)
-    both = ~np.isnan(s) & ~np.isnan(f)
-    s = np.where(both, s, np.nan)
-    f = np.where(both, f, np.nan)
-
-    # Spearman = Pearson on ranks (average ranks for ties)
-    rs = pd.DataFrame(s).rank(axis=1).to_numpy()
-    rf = pd.DataFrame(f).rank(axis=1).to_numpy()
-    with np.errstate(invalid="ignore", divide="ignore"), warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN hours
-        rs = rs - np.nanmean(rs, axis=1, keepdims=True)
-        rf = rf - np.nanmean(rf, axis=1, keepdims=True)
-        num = np.nansum(rs * rf, axis=1)
-        den = np.sqrt(np.nansum(rs**2, axis=1) * np.nansum(rf**2, axis=1))
-        ic = num / den
-    ic[(both.sum(axis=1) < min_symbols) | ~(den > 0)] = np.nan
-    return pd.Series(ic, index=signal_w.index)
-
-
+# absorption ratio terciles, fixed on the first 40 % of hours only
 def regime_cutoffs(ar_by_hour, train_frac=0.4):
-    """Tercile cutoffs of the absorption ratio on the first `train_frac` of hours."""
     n_train = int(len(ar_by_hour) * train_frac)
-    lo, hi = np.nanquantile(ar_by_hour.iloc[:n_train].to_numpy(dtype=float), [1 / 3, 2 / 3])
-    return float(lo), float(hi)
+    lo, hi = ar_by_hour.iloc[:n_train].quantile([1 / 3, 2 / 3])
+    return lo, hi
 
 
+# Label type of regime
 def label_regimes(ar_by_hour, lo, hi):
-    """'low' if AR <= lo, 'high' if AR > hi, 'mid' in between, NaN if AR is NaN."""
-    ar = ar_by_hour.to_numpy(dtype=float)
-    lab = np.full(len(ar), None, dtype=object)
-    lab[ar <= lo] = "low"
-    lab[(ar > lo) & (ar <= hi)] = "mid"
-    lab[ar > hi] = "high"
-    return pd.Series(lab, index=ar_by_hour.index)
+    return pd.cut(ar_by_hour, [-np.inf, lo, hi, np.inf], labels=["low", "mid", "high"])
 
 
+# mean IC in high-AR hours minus mean IC in low-AR hours, with a block bootstrap over days
 def day_block_bootstrap(ic, regime, n_boot=10000, block_days=1, seed=0):
-    """Mean IC in 'high' minus mean IC in 'low', with a block bootstrap over days.
 
-    Hours are grouped into blocks of `block_days` calendar days (UTC). Each
-    replicate draws as many blocks as there are, with replacement, and
-    recomputes both means from the hours in the drawn blocks.
+# IC sums and hour counts per day
+    high = (regime == "high") & ic.notna()
+    low = (regime == "low") & ic.notna()
+    block = (ic.index.floor("D") - ic.index[0].floor("D")).days // block_days
+    sums = pd.DataFrame(
+        {"ic_high": ic.where(high, 0.0), "n_high": high, "ic_low": ic.where(low, 0.0), "n_low": low}
+    ).groupby(block).sum().to_numpy(dtype=float)
 
-    Returns dict: ic_high, ic_low, diff, ci_lo, ci_hi (95 % percentile),
-    p (two-sided, from the bootstrap distribution centred on the estimate),
-    n_high, n_low, n_blocks.
-    """
-    ic = pd.Series(ic, dtype=float)
-    reg = pd.Series(regime).reindex(ic.index)
-    valid = ic.notna()
-    h = ((reg == "high") & valid).to_numpy()
-    l = ((reg == "low") & valid).to_numpy()
-    v = ic.fillna(0.0).to_numpy()
-
-    days = (ic.index.floor("D") - ic.index[0].floor("D")).days.to_numpy()
-    block = days // block_days
-    sums = (
-        pd.DataFrame({"sh": v * h, "nh": h.astype(float), "sl": v * l, "nl": l.astype(float)})
-        .groupby(block)
-        .sum()
-        .to_numpy()
-    )
-    n_blocks = len(sums)
-
+# the real difference
     tot = sums.sum(axis=0)
-    ic_high, ic_low = tot[0] / tot[1], tot[2] / tot[3]
-    diff = ic_high - ic_low
+    diff = tot[0] / tot[1] - tot[2] / tot[3]
 
+# resample days with replacement
     rng = np.random.default_rng(seed)
+    n_blocks = len(sums)
     counts = rng.multinomial(n_blocks, np.full(n_blocks, 1.0 / n_blocks), size=n_boot)
     b = counts @ sums
-    with np.errstate(invalid="ignore", divide="ignore"):
-        boot = b[:, 0] / b[:, 1] - b[:, 2] / b[:, 3]
-    boot = boot[np.isfinite(boot)]
+    boot = b[:, 0] / b[:, 1] - b[:, 2] / b[:, 3]
+
+# 95 % interval and p-value
     ci_lo, ci_hi = np.percentile(boot, [2.5, 97.5])
-    p = (1 + np.sum(np.abs(boot - diff) >= abs(diff))) / (len(boot) + 1)
+    p = (1 + np.sum(np.abs(boot - diff) >= abs(diff))) / (n_boot + 1)
     return {
-        "ic_high": float(ic_high),
-        "ic_low": float(ic_low),
-        "diff": float(diff),
-        "ci_lo": float(ci_lo),
-        "ci_hi": float(ci_hi),
-        "p": float(p),
+        "ic_high": tot[0] / tot[1],
+        "ic_low": tot[2] / tot[3],
+        "diff": diff,
+        "ci_lo": ci_lo,
+        "ci_hi": ci_hi,
+        "p": p,
         "n_high": int(tot[1]),
         "n_low": int(tot[3]),
-        "n_blocks": int(n_blocks),
+        "n_blocks": n_blocks,
     }
 
 
+# Holm step-down adjusted p-values
 def holm(pvals):
-    """Holm step-down adjusted p-values, in the input order."""
-    p = np.asarray(pvals, dtype=float)
+    p = np.asarray(pvals)
     m = len(p)
     order = np.argsort(p)
-    adj = np.maximum.accumulate((m - np.arange(m)) * p[order])
+    adjusted = np.maximum.accumulate((m - np.arange(m)) * p[order])
     out = np.empty(m)
-    out[order] = np.minimum(adj, 1.0)
+    out[order] = np.minimum(adjusted, 1.0)
     return out

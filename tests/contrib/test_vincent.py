@@ -2,6 +2,8 @@
 Track 10: tests for the absorption ratio function
 """
 
+# part 1
+
 import numpy as np
 import pandas as pd
 
@@ -87,11 +89,7 @@ def test_causal_when_later_rows_dropped():
         absorption_ratio(head).to_numpy(), full.iloc[: len(head)].to_numpy(), rtol=0, atol=1e-12
     )
 
-
-# ---------------------------------------------------------------------------
-# Part 2
-# ---------------------------------------------------------------------------
-
+# Part 2 - not required by useful tests for functions in vincent.py
 
 def _hours(n):
     return pd.date_range("2025-01-01", periods=n, freq="h", tz="UTC")
@@ -100,11 +98,10 @@ def _hours(n):
 def test_forward_returns_is_next_hour_and_nan_across_a_gap():
     df = _noise_panel(1, hours=50)
     fwd = forward_returns(df)
-    close = to_wide(df, df["close"])
-    assert np.allclose(fwd.iloc[10], close.iloc[11] / close.iloc[10] - 1.0)
+    close = to_wide(df, "close")
+    assert np.allclose(fwd.iloc[10], np.log(close.iloc[11] / close.iloc[10]))
     assert fwd.iloc[-1].isna().all()
 
-    # drop hour 20 for one symbol: its forward return at hour 19 must be NaN, not hour 21's
     gap = df.drop(df[(df["timestamp"] == df["timestamp"].unique()[20]) & (df["symbol"] == "S03")].index)
     fwd_gap = forward_returns(gap)
     assert np.isnan(fwd_gap.iloc[19]["S03"])
@@ -117,12 +114,12 @@ def test_rank_ic_perfect_inverse_and_noise():
     fwd = pd.DataFrame(rng.standard_normal((500, N)), index=_hours(500))
     assert np.allclose(rank_ic_by_hour(fwd, fwd), 1.0)
     assert np.allclose(rank_ic_by_hour(-fwd, fwd), -1.0)
-    # monotone transform leaves a rank IC unchanged
+
     assert np.allclose(rank_ic_by_hour(np.exp(fwd), fwd), 1.0)
     noise = pd.DataFrame(rng.standard_normal((500, N)), index=_hours(500))
     ic = rank_ic_by_hour(noise, fwd)
     assert abs(ic.mean()) < 0.03
-    # matches scipy on one hour
+    
     from scipy.stats import spearmanr
 
     assert np.isclose(ic.iloc[7], spearmanr(noise.iloc[7], fwd.iloc[7])[0])
@@ -132,9 +129,9 @@ def test_rank_ic_nan_handling():
     rng = np.random.default_rng(3)
     sig = pd.DataFrame(rng.standard_normal((4, N)), index=_hours(4))
     fwd = pd.DataFrame(rng.standard_normal((4, N)), index=_hours(4))
-    sig.iloc[0, :12] = np.nan  # only 8 symbols left -> below min_symbols
-    sig.iloc[1, :] = 1.0  # constant signal -> NaN
-    fwd.iloc[2, :5] = np.nan  # 15 symbols left -> still computed
+    sig.iloc[0, :12] = np.nan  
+    sig.iloc[1, :] = 1.0  
+    fwd.iloc[2, :5] = np.nan  
     ic = rank_ic_by_hour(sig, fwd, min_symbols=10)
     assert np.isnan(ic.iloc[0]) and np.isnan(ic.iloc[1])
     assert np.isfinite(ic.iloc[2]) and np.isfinite(ic.iloc[3])
@@ -167,9 +164,9 @@ def test_bootstrap_detects_a_real_gap_and_not_a_fake_one():
     res = day_block_bootstrap(ic_gap, reg, n_boot=2000, seed=0)
     assert res["ci_hi"] < 0 and res["p"] < 0.01
     assert np.isclose(res["diff"], ic_gap[reg == "high"].mean() - ic_gap[reg == "low"].mean())
-    # same seed, same answer
+  
     assert res == day_block_bootstrap(ic_gap, reg, n_boot=2000, seed=0)
-    # week blocks: fewer, wider
+    
     wk = day_block_bootstrap(ic_gap, reg, n_boot=2000, block_days=7, seed=0)
     assert wk["n_blocks"] == 43
 
