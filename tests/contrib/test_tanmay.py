@@ -123,3 +123,40 @@ def test_zero_denominators_produce_finite_signal():
 
     assert np.isfinite(signal.to_numpy()).all()
     assert signal.index.equals(df.index)
+
+
+def test_each_symbol_matches_its_own_single_symbol_run():
+    # Two symbols interleaved by timestamp, as in the real panel (sorted by timestamp, symbol).
+    # Their volume, flow and trade size differ a lot, so pooling either the rolling median or
+    # the EWM across symbols changes the output.
+    n = 8
+    timestamps = pd.date_range("2025-01-01", periods=n, freq="h", tz="UTC")
+    btc = {
+        "quote_volume": [100.0, 200.0, 150.0, 300.0, 120.0, 250.0, 180.0, 220.0],
+        "taker_buy_quote_volume": [70.0, 140.0, 90.0, 240.0, 30.0, 200.0, 60.0, 150.0],
+        "trades": [10, 10, 12, 10, 15, 8, 10, 11],
+    }
+    eth = {
+        "quote_volume": [900.0, 100.0, 1200.0, 200.0, 50.0, 700.0, 400.0, 90.0],
+        "taker_buy_quote_volume": [180.0, 20.0, 900.0, 150.0, 40.0, 100.0, 300.0, 10.0],
+        "trades": [90, 10, 120, 10, 5, 70, 20, 30],
+    }
+    df = pd.DataFrame(
+        {
+            "timestamp": np.repeat(timestamps, 2),
+            "symbol": ["BTCUSDT", "ETHUSDT"] * n,
+            **{col: np.column_stack([btc[col], eth[col]]).ravel() for col in btc},
+        }
+    )
+
+    combined = trade_intensity_imbalance(df, span=3, window=3)
+    assert combined.index.equals(df.index)
+
+    for symbol in ("BTCUSDT", "ETHUSDT"):
+        rows = df.index[df["symbol"] == symbol]
+        alone = trade_intensity_imbalance(
+            df.loc[rows].reset_index(drop=True), span=3, window=3
+        )
+        np.testing.assert_allclose(
+            combined.loc[rows].to_numpy(), alone.to_numpy(), rtol=0.0, atol=1e-12
+        )
