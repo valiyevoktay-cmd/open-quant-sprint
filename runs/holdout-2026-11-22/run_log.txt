@@ -1,0 +1,29 @@
+2026-11-22 04:52:51Z  network off, starting
+2026-11-22 04:52:51Z  HEAD 186a4afc20ae06059aa9180238b9ad1d94d818a4
+2026-11-22 04:52:52Z  freeze check exit 0
+2026-11-22 04:52:52Z  data hashes written
+2026-11-22 04:52:54Z  continuation check exit 0
+2026-11-22 04:52:54Z  start angelo_closeloc
+2026-11-22 05:34:14Z  done  angelo_closeloc  exit 1  41.3 min
+2026-11-22 05:34:14Z  start arhaan_contrarian
+2026-11-22 05:38:58Z  done  arhaan_contrarian  exit 1  4.7 min
+2026-11-22 05:38:58Z  start arnav_carry
+2026-11-22 05:48:39Z  done  arnav_carry  exit 1  9.7 min
+2026-11-22 05:48:39Z  start baseline_flow
+2026-11-22 05:55:30Z  done  baseline_flow  exit 1  6.8 min
+2026-11-22 05:55:30Z  start hongyu_zhu_strategy
+2026-11-22 05:59:15Z  done  hongyu_zhu_strategy  exit 0  3.7 min
+2026-11-22 05:59:15Z  start janice_gradual_catchup
+2026-11-22 06:08:26Z  done  janice_gradual_catchup  exit 1  9.2 min
+2026-11-22 06:08:26Z  start janice_leadlag
+2026-11-22 06:15:56Z  done  janice_leadlag  exit 1  7.5 min
+2026-11-22 06:15:56Z  start janice_slow_momentum
+2026-11-22 06:22:35Z  done  janice_slow_momentum  exit 1  6.6 min
+2026-11-22 06:22:35Z  start leaky_example
+2026-11-22 06:25:15Z  done  leaky_example  exit 1  2.7 min
+2026-11-22 06:25:15Z  start tanmay_flow
+2026-11-22 06:31:19Z  done  tanmay_flow  exit 1  6.1 min
+2026-11-22 06:31:19Z  start template
+2026-11-22 06:36:35Z  done  template  exit 1  5.3 min
+2026-11-22 06:36:36Z  tables exit 0
+2026-11-22 06:36:36Z  ALL DONE. Wi-Fi can go back on.

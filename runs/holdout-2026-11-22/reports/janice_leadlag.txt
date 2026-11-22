@@ -1,0 +1,48 @@
+========================================================================
+SYNDICATE AUDIT REPORT :: janice_leadlag.py
+========================================================================
+    audit v1.3.3 | commit 186a4af | strategy sha256 efcbf75c8c1adedf
+    data sha256 d68e6159bbdfb2e3 | holdout sha256 ae0d5463b45dfe0d
+    causality seed 175291182 | random cuts 60 (reproduce with --seed 175291182)
+    strategy process: host process
+[1] DATA QUALITY     : DQS=99.93/100 (READY) | rows=297420 | symbols=20 | gaps=0 | funding_irreg=0
+[2] CAUSALITY CHECK  : [PASS] Causal invariance verified across 66 prefix cuts (max diff=0.00e+00, seed=175291182)
+[3] RANK IC (1h fwd) : mean=+0.00298 | IC_IR=+0.011 | t=+0.41 (p=0.6805)
+[4] RUNTIME          : 355.6 ms (836,383 rows/sec)
+------------------------------------------------------------------------
+[5] TRANSACTION COST DECAY MATRIX (1-bar lag + funding included):
+    Fee (bps)      Sharpe     95% CI (block bootstrap)  DSR(N=10)   Ann.Ret     MaxDD  Turnover
+       0.0 bps      -0.62  [-2.23, +0.97] (includes 0)      0.011    -3.92%   -10.83%    0.0218
+       3.0 bps      -1.54  [-3.09, +0.01] (includes 0)      0.000    -9.67%   -18.37%    0.0218
+       5.0 bps      -2.14               [-3.66, -0.63]      0.000   -13.49%   -24.26%    0.0218
+      10.0 bps      -3.61               [-5.09, -2.18]      0.000   -23.06%   -40.27%    0.0218
+    tiered ~7.7     -3.05               [-4.54, -1.57]      0.000   -19.34%   -34.01%    0.0218
+    tiered = BTC/ETH 5 bps, 6 least liquid by trailing 30d volume 10 bps, others 7 bps
+------------------------------------------------------------------------
+[6] PURGED SPLIT (70% In-Sample / 24h Embargo / 30% Out-of-Sample @ 5.0 bps):
+    In-Sample     : Sharpe=-1.95 [-4.00, +0.21] (includes 0) | DSR=0.000 | Ann.Ret=-11.79% | MaxDD=-14.68%
+    Out-of-Sample : Sharpe=-2.56 [-4.67, -0.37] | DSR=0.003 | Ann.Ret=-17.55% | MaxDD=-10.72%
+    Holdout       : Sharpe=+0.24 [-4.30, +5.25] (includes 0) | Ann.Ret=+3.12% | MaxDD=-4.16% | bar-by-bar evaluation
+------------------------------------------------------------------------
+[7] LAG SENSITIVITY TEST (+1 extra bar execution lag @ 5.0 bps):
+    1-bar lag SR  : -2.14 | 2-bar lag SR: -2.23 | Retention: 0.0% [PASS]
+[8] NULL PIPELINE CHECK (200 daily-block permutations of returns):
+    Null SR mean  : -0.05 (sd 0.73, hurdle |mean| < 0.75) [PASS]
+    Gross SR vs null: p=0.7861 (in-sample, informational only)
+[9] FRICTION DRAG BREAKDOWN (@ 5.0 bps taker fee):
+    Gross PnL     : -6.91%
+    Fee Cost      : +16.25%
+    Funding Drag  : -0.25%
+    Net PnL       : -22.91%
+[10] WICK & MARK INTEGRITY (liquidation wick / bad mark hurdle <= 20.0%):
+    Wick PnL Share: 3.0% (3223 anomaly bars) [PASS - structural flow]
+------------------------------------------------------------------------
+[11] EXECUTION REALISM & MODEL BOUNDARIES:
+    Fills         : signal on the close of bar t, filled at that close; lag-2 test = one hour of real delay
+    Costs         : flat taker fee grid + tiered row, snapshot funding on the position held across settlement
+    Scope Caveat  : Excludes orderbook queueing, depth-scaled impact (Almgren-Chriss), & adverse selection
+[12] CORRELATION    : hourly net returns vs baseline_flow.py @ 5 bps = -0.06
+[13] REVIEW FLAGS   : module-level mutable state (lines 121) (manual review, not part of the verdict)
+========================================================================
+FINAL VERDICT: [REJECT] FAILED AUDIT
+========================================================================
