@@ -2,7 +2,10 @@
 
 Backtest and look-ahead audit harness for cross-sectional strategies on 20 Binance USD-M perpetuals (1h bars). Used for Sprint 01 (Nov 9 - Dec 7, 2026).
 
-Rules, timeline, verdict criteria: [`RULES.md`](RULES.md). Known gaps: [`LIMITATIONS.md`](LIMITATIONS.md). Changes: [`CHANGELOG.md`](CHANGELOG.md).
+Rules, timeline, verdict criteria: [`RULES.md`](RULES.md). Contributor workflow:
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Sprint progress:
+[`SPRINT_STATUS.md`](SPRINT_STATUS.md). Known gaps: [`LIMITATIONS.md`](LIMITATIONS.md).
+Changes: [`CHANGELOG.md`](CHANGELOG.md).
 
 The audit catches common look-ahead mistakes; it is not secure against deliberate cheating, and a PASS is a hygiene check, not evidence of an edge (see [Audit](#audit)).
 
