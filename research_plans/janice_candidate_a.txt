@@ -1,0 +1,63 @@
+FIXED EXPLORATORY FOLLOW-UP PLAN — CANDIDATE A
+
+Record this in your PR BEFORE the new real-data performance run. Previous IC,
+beta diagnostics and economic results have already been examined. A local
+plan file is not evidence that it was posted. Keep the original audited
+strategy unchanged. Run each candidate once as planned, disclose any bug-fix
+reruns, and report every cost/delay outcome. No search over windows, signs,
+fractions, clock phases or cutoffs. A post-hoc historical split is not fresh
+validation. Do not tune on the sprint holdout or forward periods.
+
+Success is not merely losing less through lower exposure. Inspect gross/net
+PnL, fees, turnover per unit exposure, delay sensitivity and uncertainty.
+Candidate A additionally has a descriptive, EX-POST constant-scaled reference
+matching its average gross. This uses realized future exposures, is NOT a
+prospective strategy, has no inferential CI and is never audited/submitted.
+It is not volatility/risk matching. Cash (zero modeled PnL) is also a reference.
+Paired intervals are pointwise and exploratory, not multiple-testing-adjusted.
+
+{
+  "candidate": "A",
+  "trial_budget": "one fixed new specification per candidate; no retuning",
+  "hypothesis": "Gradual adjustment reduces turnover enough to improve net economics despite added lag.",
+  "reference": "ungated original catchup",
+  "universe": "18 alts; BTC/ETH zero",
+  "burnin_hours": 720,
+  "rules": {
+    "gap_hours": 4,
+    "beta_hours": 168,
+    "flow_span_for_shared_burnin": 4,
+    "historical_flow_quantile": 0.9,
+    "quantile_hours": 720,
+    "flow_gate": false,
+    "decision_hours": 8,
+    "target_deadband": 0.015,
+    "clip": 3,
+    "target": "original ungated issued catchup book, including its existing band/projection",
+    "update": "0.75*previous+0.25*reference_target",
+    "renormalize_after_blend": false
+  },
+  "common": {
+    "fees_bps": [
+      0,
+      3,
+      5,
+      10,
+      "repository tiered"
+    ],
+    "funding": true,
+    "lag_bars": [
+      1,
+      2
+    ],
+    "primary_cost_bps": 5,
+    "primary_lag_bars": 2,
+    "bootstrap_hours": 168,
+    "bootstrap_reps": 1000,
+    "seed": 20261116,
+    "accounting": "repository additive fixed-notional PnL; no terminal forced close",
+    "sample": "same dates for candidate/reference, beginning after720 prior hours",
+    "scope": "exploratory training reanalysis; earlier full-panel results already seen",
+    "limitations": "no spread, impact, margin liquidation, fill uncertainty or sealed validation"
+  }
+}

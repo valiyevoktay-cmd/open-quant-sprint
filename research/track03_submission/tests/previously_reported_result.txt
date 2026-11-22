@@ -1,0 +1,10 @@
+Previously reported local test result
+
+Command:
+.venv/bin/python -m pytest -q
+
+Reported terminal output:
+163 passed, 12 subtests passed in 75.75s (0:01:15)
+
+This records the earlier user-reported result.
+It is not a newly captured test run.
