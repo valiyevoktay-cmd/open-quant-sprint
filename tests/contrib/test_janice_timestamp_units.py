@@ -39,8 +39,10 @@ class TimestampCompatibilityTests(unittest.TestCase):
         d=panel(12)
         d['timestamp']=d['timestamp'].dt.as_unit('ms')
         hour=d['timestamp'].iloc[5*20]
+        # Maintainer change before the freeze: compute_weights now fills missing hours (src/contrib/janice_gaps.py),
+        # so the check that a real missing hour is rejected runs on build_portfolios.
         with self.assertRaisesRegex(ValueError,'contiguous hourly'):
-            compute_weights(d.loc[d['timestamp']!=hour])
+            build_portfolios(d.loc[d['timestamp']!=hour])
 
     def test_single_bar_prefix_is_valid_for_every_unit(self):
         for unit in ('s','ms','us','ns'):

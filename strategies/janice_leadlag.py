@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from src.contrib.janice import leader_flow_impulse
+from src.contrib.janice_gaps import on_full_grid
 from src.features import cross_sectional_zscore
 
 
@@ -141,4 +142,5 @@ def build_portfolios(df,rules=TradingRules(),variants=('reversal','catchup','cat
 
 def compute_weights(df:pd.DataFrame)->pd.Series:
     """Audit entry point: predeclared strong-flow beta-adjusted catch-up book."""
-    return build_portfolios(df,variants=('catchup_strong',))['catchup_strong']
+    # Maintainer change before the freeze: missing hours are filled as the data builder fills a short gap.
+    return on_full_grid(lambda d:build_portfolios(d,variants=('catchup_strong',))['catchup_strong'],df)
